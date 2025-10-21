@@ -10,8 +10,11 @@ import {
 } from 'react-native';
 import { useEffect, useState, useRef } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../store/authStore';
 import { useChatStore } from '../../../store/chatStore';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../firebaseConfig';
 import { format } from 'date-fns';
 
 export default function ChatScreen() {
@@ -21,10 +24,25 @@ export default function ChatScreen() {
   const { messages, subscribeToMessages, sendMessage, clearMessages } = useChatStore();
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
+  const [otherUser, setOtherUser] = useState(null);
   const flatListRef = useRef(null);
 
   useEffect(() => {
     if (id) {
+      // Fetch conversation to get other user's info
+      const fetchConversation = async () => {
+        const convoDoc = await getDoc(doc(db, 'conversations', id));
+        if (convoDoc.exists()) {
+          const convoData = convoDoc.data();
+          const otherUserId = convoData.participants.find(uid => uid !== user.uid);
+          const userDoc = await getDoc(doc(db, 'users', otherUserId));
+          if (userDoc.exists()) {
+            setOtherUser(userDoc.data());
+          }
+        }
+      };
+
+      fetchConversation();
       const unsubscribe = subscribeToMessages(id);
       return () => {
         unsubscribe();
@@ -99,11 +117,27 @@ export default function ChatScreen() {
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={100}
-    >
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <KeyboardAvoidingView 
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        {/* Custom Header */}
+        <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <Text style={styles.backText}>←</Text>
+        </TouchableOpacity>
+        <View style={styles.headerInfo}>
+          <Text style={styles.headerName}>
+            {otherUser?.displayName || 'Loading...'}
+          </Text>
+          {otherUser?.online && (
+            <Text style={styles.onlineStatus}>Online</Text>
+          )}
+        </View>
+      </View>
+
       <FlatList
         ref={flatListRef}
         data={messages}
@@ -130,14 +164,47 @@ export default function ChatScreen() {
           <Text style={styles.sendButtonText}>Send</Text>
         </TouchableOpacity>
       </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#075E54',
+  },
   container: {
     flex: 1,
     backgroundColor: '#e5ddd5',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#075E54',
+    padding: 10,
+    paddingTop: 10,
+  },
+  backButton: {
+    padding: 10,
+    marginRight: 10,
+  },
+  backText: {
+    color: '#fff',
+    fontSize: 24,
+  },
+  headerInfo: {
+    flex: 1,
+  },
+  headerName: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  onlineStatus: {
+    color: '#ccc',
+    fontSize: 12,
+    marginTop: 2,
   },
   messagesList: {
     padding: 15,

@@ -52,9 +52,12 @@ The following features are REQUIRED for MVP completion:
 ✅ Firebase connected and working  
 ✅ Environment variables configured  
 ✅ AsyncStorage installed  
-✅ **Phase 1 Complete**: Auth flow working (signup, login, profile setup, sign out)
+✅ **Phase 1 Complete**: Auth flow working (signup, login, profile setup, sign out)  
+✅ **Phase 2 Complete**: Core messaging working (1-on-1 chat, real-time sync, optimistic UI)
 
-**Setup Note**: Used `Slot` instead of `Stack` in layouts to avoid boolean/string type error with Expo Router v6. Required AsyncStorage@2.2.0 and correct React/RN versions for Expo SDK 54 compatibility.  
+**Setup Notes**: 
+- Used `Slot` instead of `Stack` in layouts to avoid boolean/string type error with Expo Router v6. Required AsyncStorage@2.2.0 and correct React/RN versions for Expo SDK 54 compatibility.
+- Created Firestore composite index for `conversations` collection (participants + updatedAt) to enable filtered + sorted queries. Index creation required via Firebase Console link provided in error message.  
 
 ## Firebase Architecture
 
