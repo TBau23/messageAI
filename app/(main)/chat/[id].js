@@ -16,6 +16,7 @@ import { useChatStore } from '../../../store/chatStore';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebaseConfig';
 import { format } from 'date-fns';
+import NetworkBanner from '../../../components/NetworkBanner';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams();
@@ -76,12 +77,49 @@ export default function ChatScreen() {
     }
   };
 
+  const getMessageStatus = (message, isMyMessage) => {
+    if (!isMyMessage) return null;
+    
+    // Check if message is pending sync (optimistic/queued)
+    const isPending = message._pendingSync === true;
+    
+    // Debug log
+    console.log('Message status check:', {
+      text: message.text?.substring(0, 20),
+      hasId: !!message.id,
+      hasLocalId: !!message.localId,
+      pendingSync: message._pendingSync,
+      isPending
+    });
+    
+    if (isPending) {
+      // Message is still sending/queued
+      return { icon: '⏱', color: '#999' };
+    }
+    
+    // Check read status (future: Phase 5 - read receipts)
+    const readByRecipient = message.readBy?.length > 1;
+    if (readByRecipient) {
+      return { icon: '✓✓', color: '#0084ff' }; // Read (blue)
+    }
+    
+    // Check delivered status
+    const deliveredToRecipient = message.deliveredTo?.length > 1;
+    if (deliveredToRecipient) {
+      return { icon: '✓✓', color: '#999' }; // Delivered
+    }
+    
+    return { icon: '✓', color: '#999' }; // Sent
+  };
+
   const renderMessage = ({ item }) => {
     const isMyMessage = item.senderId === user.uid;
     const timestamp = item.timestamp?.toDate?.() || item.timestamp;
     const timeString = timestamp 
       ? format(timestamp, 'h:mm a')
       : '';
+    
+    const status = getMessageStatus(item, isMyMessage);
 
     return (
       <View style={[
@@ -105,9 +143,9 @@ export default function ChatScreen() {
             ]}>
               {timeString}
             </Text>
-            {isMyMessage && (
-              <Text style={styles.messageStatus}>
-                {item.status === 'sending' ? '○' : '✓'}
+            {status && (
+              <Text style={[styles.messageStatus, { color: status.color }]}>
+                {status.icon}
               </Text>
             )}
           </View>
@@ -125,7 +163,7 @@ export default function ChatScreen() {
       >
         {/* Custom Header */}
         <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerInfo}>
@@ -138,11 +176,14 @@ export default function ChatScreen() {
         </View>
       </View>
 
+      {/* Network Status Banner */}
+      <NetworkBanner />
+
       <FlatList
         ref={flatListRef}
         data={messages}
         renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.id || item.localId || String(item.timestamp)}
         contentContainerStyle={styles.messagesList}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
       />

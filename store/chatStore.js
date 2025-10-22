@@ -20,6 +20,7 @@ export const useChatStore = create((set, get) => ({
   conversations: [],
   currentConversation: null,
   messages: [],
+  optimisticMessages: [], // Local-only messages waiting for Firestore confirmation
   loading: false,
   error: null,
 
@@ -66,11 +67,59 @@ export const useChatStore = create((set, get) => ({
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({
+      const firestoreMessages = snapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        _pendingSync: false, // Firestore messages are synced
       }));
-      set({ messages: msgs });
+      
+      console.log('Firestore snapshot received:', firestoreMessages.length, 'messages');
+      
+      // Merge with optimistic messages
+      const { optimisticMessages } = get();
+      
+      console.log('Current optimistic messages:', optimisticMessages.length);
+      
+      // Remove optimistic messages that now have Firestore IDs
+      // Match by text + sender (more reliable than timestamp)
+      const stillPending = optimisticMessages.filter(opt => {
+        const matched = firestoreMessages.some(msg => {
+          // Match if same text, same sender, and timestamp within 5 seconds
+          const sameText = msg.text === opt.text;
+          const sameSender = msg.senderId === opt.senderId;
+          
+          const optTime = opt.timestamp?.getTime?.() || opt.timestamp;
+          const msgTime = msg.timestamp?.toMillis?.() || (msg.timestamp?.getTime?.() || msg.timestamp);
+          const timeDiff = Math.abs(optTime - msgTime);
+          const closeTime = timeDiff < 5000; // 5 second tolerance
+          
+          console.log('Matching attempt:', {
+            optText: opt.text?.substring(0, 15),
+            msgText: msg.text?.substring(0, 15),
+            sameText,
+            sameSender,
+            timeDiff,
+            closeTime,
+            matched: sameText && sameSender && closeTime
+          });
+          
+          return sameText && sameSender && closeTime;
+        });
+        
+        return !matched; // Keep if not matched
+      });
+      
+      console.log('Still pending after merge:', stillPending.length);
+      
+      // Combine: optimistic messages first (they're pending), then Firestore messages
+      const allMessages = [...stillPending, ...firestoreMessages];
+      
+      console.log('Total messages after merge:', allMessages.length);
+      
+      set({ 
+        messages: allMessages,
+        optimisticMessages: stillPending
+      });
     });
 
     return unsubscribe;
@@ -119,22 +168,33 @@ export const useChatStore = create((set, get) => ({
   // Send a message
   sendMessage: async (conversationId, senderId, text) => {
     try {
-      // Add optimistic message
-      const tempId = `temp_${Date.now()}`;
+      // Create optimistic message with pending flag
+      const localId = `local_${Date.now()}_${Math.random()}`;
       const optimisticMessage = {
-        id: tempId,
+        localId,
         text,
         senderId,
         timestamp: new Date(),
-        status: 'sending',
-        localId: tempId
+        deliveredTo: [senderId],
+        readBy: [senderId],
+        _pendingSync: true, // Flag to indicate not yet synced to Firestore
       };
 
+      console.log('Creating optimistic message:', {
+        localId,
+        text: text.substring(0, 20),
+        pendingSync: true
+      });
+
+      // Add to both messages and optimisticMessages
       set((state) => ({
-        messages: [...state.messages, optimisticMessage]
+        messages: [...state.messages, optimisticMessage],
+        optimisticMessages: [...state.optimisticMessages, optimisticMessage]
       }));
 
-      // Send to Firestore
+      console.log('Optimistic message added to state');
+
+      // Send to Firestore (queued automatically if offline)
       const messageRef = await addDoc(
         collection(db, `conversations/${conversationId}/messages`),
         {
@@ -143,7 +203,6 @@ export const useChatStore = create((set, get) => ({
           timestamp: serverTimestamp(),
           deliveredTo: [senderId],
           readBy: [senderId],
-          status: 'sent'
         }
       );
 
@@ -157,24 +216,11 @@ export const useChatStore = create((set, get) => ({
         updatedAt: serverTimestamp()
       });
 
-      // Remove optimistic message (real one will come from listener)
-      set((state) => ({
-        messages: state.messages.filter(msg => msg.id !== tempId)
-      }));
-
-      return { success: true, messageId: messageRef.id };
+      // Firestore listener will handle removing from optimistic messages
+      console.log('Message sent to Firestore:', messageRef.id);
+      return { success: true, messageId: messageRef.id, localId };
     } catch (error) {
       console.error('Error sending message:', error);
-      
-      // Update optimistic message to show error
-      set((state) => ({
-        messages: state.messages.map(msg =>
-          msg.id === `temp_${Date.now()}` 
-            ? { ...msg, status: 'error' }
-            : msg
-        )
-      }));
-
       return { success: false, error: error.message };
     }
   },
@@ -198,7 +244,7 @@ export const useChatStore = create((set, get) => ({
 
   // Clear messages when leaving chat
   clearMessages: () => {
-    set({ messages: [], currentConversation: null });
+    set({ messages: [], optimisticMessages: [], currentConversation: null });
   },
 
   // Search for users

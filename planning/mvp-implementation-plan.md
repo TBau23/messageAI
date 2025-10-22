@@ -57,7 +57,12 @@ The following features are REQUIRED for MVP completion:
 
 **Setup Notes**: 
 - Used `Slot` instead of `Stack` in layouts to avoid boolean/string type error with Expo Router v6. Required AsyncStorage@2.2.0 and correct React/RN versions for Expo SDK 54 compatibility.
-- Created Firestore composite index for `conversations` collection (participants + updatedAt) to enable filtered + sorted queries. Index creation required via Firebase Console link provided in error message.  
+- Created Firestore composite index for `conversations` collection (participants + updatedAt) to enable filtered + sorted queries. Index creation required via Firebase Console link provided in error message.
+
+**Architectural Decision - Phase 3**: 
+- Using **Firestore's built-in offline persistence** instead of manual SQLite implementation for MVP. Firestore automatically handles offline caching, write queuing, auto-retry, and conflict resolution.
+- Phase 3 scope simplified to: network monitoring, message status UI indicators, and message service abstraction layer.
+- SQLite migration deferred to post-MVP for performance optimization when needed.  
 
 ## Firebase Architecture
 
