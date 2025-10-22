@@ -15,17 +15,22 @@ import {
   arrayUnion
 } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import { useNotificationStore } from './notificationStore';
 
 export const useChatStore = create((set, get) => ({
   conversations: [],
   currentConversation: null,
   messages: [],
-  optimisticMessages: [], // Local-only messages waiting for Firestore confirmation
   loading: false,
   error: null,
+  previousConversations: {}, // Track previous state for notifications
+  isInitialLoad: true, // Track if this is the first load
 
   // Subscribe to user's conversations
   subscribeToConversations: (userId) => {
+    // Reset initial load flag when subscribing
+    set({ isInitialLoad: true });
+    
     const q = query(
       collection(db, 'conversations'),
       where('participants', 'array-contains', userId),
@@ -33,27 +38,98 @@ export const useChatStore = create((set, get) => ({
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const { previousConversations, isInitialLoad } = get();
+      
       const convos = await Promise.all(
         snapshot.docs.map(async (docSnap) => {
           const data = docSnap.data();
           
-          // Get other participant's info
-          const otherParticipantId = data.participants.find(id => id !== userId);
-          const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
-          const otherUser = userDoc.data();
+          if (data.type === 'group') {
+            // For group chats, fetch all participant details
+            const participantDetails = await Promise.all(
+              data.participants
+                .filter(id => id !== userId)
+                .map(async (participantId) => {
+                  const userDoc = await getDoc(doc(db, 'users', participantId));
+                  return {
+                    uid: participantId,
+                    ...userDoc.data()
+                  };
+                })
+            );
 
-          return {
-            id: docSnap.id,
-            ...data,
-            otherUser: {
-              uid: otherParticipantId,
-              ...otherUser
-            }
-          };
+            return {
+              id: docSnap.id,
+              ...data,
+              participants: data.participants,
+              participantDetails
+            };
+          } else {
+            // For direct chats, get other participant's info
+            const otherParticipantId = data.participants.find(id => id !== userId);
+            const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
+            const otherUser = userDoc.data();
+
+            return {
+              id: docSnap.id,
+              ...data,
+              otherUser: {
+                uid: otherParticipantId,
+                ...otherUser
+              }
+            };
+          }
         })
       );
 
-      set({ conversations: convos });
+      // Check for new messages and trigger notifications (skip on initial load)
+      if (!isInitialLoad) {
+        convos.forEach((convo) => {
+          const prevConvo = previousConversations[convo.id];
+          const lastMsg = convo.lastMessage;
+          
+          // Trigger notification if:
+          // 1. There's a last message
+          // 2. The message is from someone else (not the current user)
+          // 3. This is a new message (different from previous)
+          if (
+            lastMsg &&
+            lastMsg.senderId !== userId &&
+            (!prevConvo || 
+             !prevConvo.lastMessage ||
+             prevConvo.lastMessage.timestamp?.seconds !== lastMsg.timestamp?.seconds)
+          ) {
+            // Get sender name
+            let senderName = 'Unknown';
+            if (convo.type === 'group') {
+              const sender = convo.participantDetails?.find(p => p.uid === lastMsg.senderId);
+              senderName = sender?.displayName || 'Unknown';
+            } else {
+              senderName = convo.otherUser?.displayName || 'Unknown';
+            }
+
+            // Trigger notification
+            useNotificationStore.getState().showNotification({
+              conversationId: convo.id,
+              text: lastMsg.text,
+              senderName,
+              timestamp: lastMsg.timestamp
+            });
+          }
+        });
+      }
+
+      // Update state
+      const conversationsMap = convos.reduce((acc, convo) => {
+        acc[convo.id] = convo;
+        return acc;
+      }, {});
+      
+      set({ 
+        conversations: convos,
+        previousConversations: conversationsMap,
+        isInitialLoad: false // Mark that we've completed the initial load
+      });
     });
 
     return unsubscribe;
@@ -67,59 +143,11 @@ export const useChatStore = create((set, get) => ({
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const firestoreMessages = snapshot.docs.map(doc => ({
+      const msgs = snapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data(),
-        _pendingSync: false, // Firestore messages are synced
+        ...doc.data()
       }));
-      
-      console.log('Firestore snapshot received:', firestoreMessages.length, 'messages');
-      
-      // Merge with optimistic messages
-      const { optimisticMessages } = get();
-      
-      console.log('Current optimistic messages:', optimisticMessages.length);
-      
-      // Remove optimistic messages that now have Firestore IDs
-      // Match by text + sender (more reliable than timestamp)
-      const stillPending = optimisticMessages.filter(opt => {
-        const matched = firestoreMessages.some(msg => {
-          // Match if same text, same sender, and timestamp within 5 seconds
-          const sameText = msg.text === opt.text;
-          const sameSender = msg.senderId === opt.senderId;
-          
-          const optTime = opt.timestamp?.getTime?.() || opt.timestamp;
-          const msgTime = msg.timestamp?.toMillis?.() || (msg.timestamp?.getTime?.() || msg.timestamp);
-          const timeDiff = Math.abs(optTime - msgTime);
-          const closeTime = timeDiff < 5000; // 5 second tolerance
-          
-          console.log('Matching attempt:', {
-            optText: opt.text?.substring(0, 15),
-            msgText: msg.text?.substring(0, 15),
-            sameText,
-            sameSender,
-            timeDiff,
-            closeTime,
-            matched: sameText && sameSender && closeTime
-          });
-          
-          return sameText && sameSender && closeTime;
-        });
-        
-        return !matched; // Keep if not matched
-      });
-      
-      console.log('Still pending after merge:', stillPending.length);
-      
-      // Combine: optimistic messages first (they're pending), then Firestore messages
-      const allMessages = [...stillPending, ...firestoreMessages];
-      
-      console.log('Total messages after merge:', allMessages.length);
-      
-      set({ 
-        messages: allMessages,
-        optimisticMessages: stillPending
-      });
+      set({ messages: msgs });
     });
 
     return unsubscribe;
@@ -130,7 +158,7 @@ export const useChatStore = create((set, get) => ({
     try {
       set({ loading: true, error: null });
 
-      // Check if conversation already exists
+      // Check if DIRECT conversation already exists between these two users
       const q = query(
         collection(db, 'conversations'),
         where('participants', 'array-contains', currentUserId)
@@ -138,8 +166,15 @@ export const useChatStore = create((set, get) => ({
 
       const snapshot = await getDocs(q);
       const existingConvo = snapshot.docs.find(doc => {
-        const participants = doc.data().participants;
-        return participants.includes(otherUserId);
+        const data = doc.data();
+        const participants = data.participants;
+        
+        // Must be a direct chat, have exactly 2 participants, and include both users
+        return (
+          data.type === 'direct' &&
+          participants.length === 2 &&
+          participants.includes(otherUserId)
+        );
       });
 
       if (existingConvo) {
@@ -165,36 +200,55 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
+  // Create a group conversation
+  createGroupConversation: async (participantIds, groupName) => {
+    try {
+      set({ loading: true, error: null });
+
+      if (participantIds.length < 3) {
+        console.error('Group must have at least 3 participants');
+        set({ loading: false, error: 'Group must have at least 3 participants' });
+        return null;
+      }
+
+      // Create new group conversation
+      const newConvo = await addDoc(collection(db, 'conversations'), {
+        participants: participantIds,
+        type: 'group',
+        name: groupName,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        lastMessage: null
+      });
+
+      set({ loading: false });
+      return newConvo.id;
+    } catch (error) {
+      console.error('Error creating group conversation:', error);
+      set({ loading: false, error: error.message });
+      return null;
+    }
+  },
+
   // Send a message
   sendMessage: async (conversationId, senderId, text) => {
     try {
-      // Create optimistic message with pending flag
-      const localId = `local_${Date.now()}_${Math.random()}`;
+      // Add optimistic message
+      const tempId = `temp_${Date.now()}`;
       const optimisticMessage = {
-        localId,
+        id: tempId,
         text,
         senderId,
         timestamp: new Date(),
-        deliveredTo: [senderId],
-        readBy: [senderId],
-        _pendingSync: true, // Flag to indicate not yet synced to Firestore
+        status: 'sending',
+        localId: tempId
       };
 
-      console.log('Creating optimistic message:', {
-        localId,
-        text: text.substring(0, 20),
-        pendingSync: true
-      });
-
-      // Add to both messages and optimisticMessages
       set((state) => ({
-        messages: [...state.messages, optimisticMessage],
-        optimisticMessages: [...state.optimisticMessages, optimisticMessage]
+        messages: [...state.messages, optimisticMessage]
       }));
 
-      console.log('Optimistic message added to state');
-
-      // Send to Firestore (queued automatically if offline)
+      // Send to Firestore
       const messageRef = await addDoc(
         collection(db, `conversations/${conversationId}/messages`),
         {
@@ -203,6 +257,7 @@ export const useChatStore = create((set, get) => ({
           timestamp: serverTimestamp(),
           deliveredTo: [senderId],
           readBy: [senderId],
+          status: 'sent'
         }
       );
 
@@ -216,11 +271,24 @@ export const useChatStore = create((set, get) => ({
         updatedAt: serverTimestamp()
       });
 
-      // Firestore listener will handle removing from optimistic messages
-      console.log('Message sent to Firestore:', messageRef.id);
-      return { success: true, messageId: messageRef.id, localId };
+      // Remove optimistic message (real one will come from listener)
+      set((state) => ({
+        messages: state.messages.filter(msg => msg.id !== tempId)
+      }));
+
+      return { success: true, messageId: messageRef.id };
     } catch (error) {
       console.error('Error sending message:', error);
+      
+      // Update optimistic message to show error
+      set((state) => ({
+        messages: state.messages.map(msg =>
+          msg.id === `temp_${Date.now()}` 
+            ? { ...msg, status: 'error' }
+            : msg
+        )
+      }));
+
       return { success: false, error: error.message };
     }
   },
@@ -244,7 +312,7 @@ export const useChatStore = create((set, get) => ({
 
   // Clear messages when leaving chat
   clearMessages: () => {
-    set({ messages: [], optimisticMessages: [], currentConversation: null });
+    set({ messages: [], currentConversation: null });
   },
 
   // Search for users

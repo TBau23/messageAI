@@ -13,6 +13,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../store/authStore';
 import { useChatStore } from '../../../store/chatStore';
+import { useNotificationStore } from '../../../store/notificationStore';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebaseConfig';
 import { format } from 'date-fns';
@@ -23,22 +24,44 @@ export default function ChatScreen() {
   const router = useRouter();
   const { user } = useAuthStore();
   const { messages, subscribeToMessages, sendMessage, clearMessages } = useChatStore();
+  const { setCurrentChatId } = useNotificationStore();
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
-  const [otherUser, setOtherUser] = useState(null);
+  const [conversationData, setConversationData] = useState(null);
+  const [participantMap, setParticipantMap] = useState({});
   const flatListRef = useRef(null);
 
   useEffect(() => {
     if (id) {
-      // Fetch conversation to get other user's info
+      // Set current chat to prevent notifications from this conversation
+      setCurrentChatId(id);
+
+      // Fetch conversation info
       const fetchConversation = async () => {
         const convoDoc = await getDoc(doc(db, 'conversations', id));
         if (convoDoc.exists()) {
           const convoData = convoDoc.data();
-          const otherUserId = convoData.participants.find(uid => uid !== user.uid);
-          const userDoc = await getDoc(doc(db, 'users', otherUserId));
-          if (userDoc.exists()) {
-            setOtherUser(userDoc.data());
+          setConversationData({ id, ...convoData });
+
+          // Fetch all participant details for groups
+          if (convoData.type === 'group') {
+            const participantsData = {};
+            await Promise.all(
+              convoData.participants.map(async (uid) => {
+                const userDoc = await getDoc(doc(db, 'users', uid));
+                if (userDoc.exists()) {
+                  participantsData[uid] = userDoc.data();
+                }
+              })
+            );
+            setParticipantMap(participantsData);
+          } else {
+            // For direct chats, just get the other user
+            const otherUserId = convoData.participants.find(uid => uid !== user.uid);
+            const userDoc = await getDoc(doc(db, 'users', otherUserId));
+            if (userDoc.exists()) {
+              setParticipantMap({ [otherUserId]: userDoc.data() });
+            }
           }
         }
       };
@@ -48,6 +71,7 @@ export default function ChatScreen() {
       return () => {
         unsubscribe();
         clearMessages();
+        setCurrentChatId(null); // Clear current chat when leaving
       };
     }
   }, [id]);
@@ -60,6 +84,21 @@ export default function ChatScreen() {
       }, 100);
     }
   }, [messages]);
+
+  // Mark messages as read when chat is viewed
+  useEffect(() => {
+    if (id && messages.length > 0 && user) {
+      // Find unread messages (not in readBy array)
+      const unreadMessages = messages.filter(
+        msg => msg.senderId !== user.uid && !(msg.readBy || []).includes(user.uid)
+      );
+      
+      if (unreadMessages.length > 0) {
+        const messageIds = unreadMessages.map(msg => msg.id);
+        useChatStore.getState().markMessagesAsRead(id, messageIds, user.uid);
+      }
+    }
+  }, [id, messages, user]);
 
   const handleSend = async () => {
     if (!inputText.trim() || sending) return;
@@ -77,49 +116,41 @@ export default function ChatScreen() {
     }
   };
 
-  const getMessageStatus = (message, isMyMessage) => {
-    if (!isMyMessage) return null;
-    
-    // Check if message is pending sync (optimistic/queued)
-    const isPending = message._pendingSync === true;
-    
-    // Debug log
-    console.log('Message status check:', {
-      text: message.text?.substring(0, 20),
-      hasId: !!message.id,
-      hasLocalId: !!message.localId,
-      pendingSync: message._pendingSync,
-      isPending
-    });
-    
-    if (isPending) {
-      // Message is still sending/queued
-      return { icon: '⏱', color: '#999' };
-    }
-    
-    // Check read status (future: Phase 5 - read receipts)
-    const readByRecipient = message.readBy?.length > 1;
-    if (readByRecipient) {
-      return { icon: '✓✓', color: '#0084ff' }; // Read (blue)
-    }
-    
-    // Check delivered status
-    const deliveredToRecipient = message.deliveredTo?.length > 1;
-    if (deliveredToRecipient) {
-      return { icon: '✓✓', color: '#999' }; // Delivered
-    }
-    
-    return { icon: '✓', color: '#999' }; // Sent
-  };
-
   const renderMessage = ({ item }) => {
     const isMyMessage = item.senderId === user.uid;
     const timestamp = item.timestamp?.toDate?.() || item.timestamp;
     const timeString = timestamp 
       ? format(timestamp, 'h:mm a')
       : '';
-    
-    const status = getMessageStatus(item, isMyMessage);
+
+    const senderName = participantMap[item.senderId]?.displayName || 'Unknown';
+    const isGroup = conversationData?.type === 'group';
+
+    // Calculate read receipt status
+    const getReceiptStatus = () => {
+      if (!isMyMessage) return null;
+      if (item.status === 'sending') return { icon: '🕐', color: '#999' };
+      
+      const participants = conversationData?.participants || [];
+      const otherParticipants = participants.filter(p => p !== user.uid);
+      const readBy = item.readBy || [];
+      const deliveredTo = item.deliveredTo || [];
+      
+      // Check if all other participants have read it
+      const allRead = otherParticipants.every(p => readBy.includes(p));
+      // Check if all other participants have received it
+      const allDelivered = otherParticipants.every(p => deliveredTo.includes(p));
+      
+      if (allRead) {
+        return { icon: '✓✓', color: '#4fc3f7' }; // Blue double check
+      } else if (allDelivered) {
+        return { icon: '✓✓', color: '#999' }; // Grey double check
+      } else {
+        return { icon: '✓', color: '#999' }; // Grey single check (sent)
+      }
+    };
+
+    const receiptStatus = getReceiptStatus();
 
     return (
       <View style={[
@@ -130,6 +161,10 @@ export default function ChatScreen() {
           styles.messageBubble,
           isMyMessage ? styles.myMessageBubble : styles.otherMessageBubble
         ]}>
+          {/* Show sender name in group chats for other users' messages */}
+          {isGroup && !isMyMessage && (
+            <Text style={styles.senderName}>{senderName}</Text>
+          )}
           <Text style={[
             styles.messageText,
             isMyMessage ? styles.myMessageText : styles.otherMessageText
@@ -143,9 +178,9 @@ export default function ChatScreen() {
             ]}>
               {timeString}
             </Text>
-            {status && (
-              <Text style={[styles.messageStatus, { color: status.color }]}>
-                {status.icon}
+            {receiptStatus && (
+              <Text style={[styles.messageStatus, { color: receiptStatus.color }]}>
+                {receiptStatus.icon}
               </Text>
             )}
           </View>
@@ -164,17 +199,25 @@ export default function ChatScreen() {
         {/* Custom Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backText}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerName}>
-            {otherUser?.displayName || 'Loading...'}
-          </Text>
-          {otherUser?.online && (
-            <Text style={styles.onlineStatus}>Online</Text>
-          )}
+            <Text style={styles.backText}>←</Text>
+          </TouchableOpacity>
+          <View style={styles.headerInfo}>
+            <Text style={styles.headerName}>
+              {conversationData?.type === 'group' 
+                ? conversationData.name || 'Group Chat'
+                : participantMap[Object.keys(participantMap)[0]]?.displayName || 'Loading...'}
+            </Text>
+            {conversationData?.type === 'group' ? (
+              <Text style={styles.onlineStatus}>
+                {conversationData.participants?.length || 0} participants
+              </Text>
+            ) : (
+              participantMap[Object.keys(participantMap)[0]]?.online && (
+                <Text style={styles.onlineStatus}>Online</Text>
+              )
+            )}
+          </View>
         </View>
-      </View>
 
       {/* Network Status Banner */}
       <NetworkBanner />
@@ -183,7 +226,7 @@ export default function ChatScreen() {
         ref={flatListRef}
         data={messages}
         renderItem={renderMessage}
-        keyExtractor={(item) => item.id || item.localId || String(item.timestamp)}
+        keyExtractor={(item) => item.id}
         contentContainerStyle={styles.messagesList}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
       />
@@ -269,6 +312,12 @@ const styles = StyleSheet.create({
   },
   otherMessageBubble: {
     backgroundColor: '#fff',
+  },
+  senderName: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#075E54',
+    marginBottom: 4,
   },
   messageText: {
     fontSize: 16,

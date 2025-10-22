@@ -30,25 +30,47 @@ export default function ChatListScreen() {
       ? format(lastMessageTime, 'h:mm a')
       : '';
 
+    // Determine display name and avatar
+    let displayName;
+    let avatarText;
+    
+    if (item.type === 'group') {
+      displayName = item.name || 'Group Chat';
+      avatarText = item.name?.[0]?.toUpperCase() || 'G';
+    } else {
+      displayName = item.otherUser?.displayName || 'Unknown User';
+      avatarText = item.otherUser?.displayName?.[0]?.toUpperCase() || '?';
+    }
+
+    // Subtitle/preview text
+    let subtitleText;
+    if (item.type === 'group') {
+      // For groups, show last message if exists, otherwise show participant count
+      subtitleText = item.lastMessage?.text || `${item.participants?.length || 0} participants`;
+    } else {
+      // For direct chats, show last message or empty state
+      subtitleText = item.lastMessage?.text || 'No messages yet';
+    }
+
     return (
       <TouchableOpacity
         style={styles.conversationItem}
         onPress={() => router.push(`/chat/${item.id}`)}
       >
-        <View style={styles.avatar}>
+        <View style={[styles.avatar, item.type === 'group' && styles.groupAvatar]}>
           <Text style={styles.avatarText}>
-            {item.otherUser?.displayName?.[0]?.toUpperCase() || '?'}
+            {avatarText}
           </Text>
         </View>
         <View style={styles.conversationContent}>
           <View style={styles.conversationHeader}>
             <Text style={styles.conversationName}>
-              {item.otherUser?.displayName || 'Unknown User'}
+              {displayName}
             </Text>
             <Text style={styles.conversationTime}>{timeString}</Text>
           </View>
           <Text style={styles.conversationMessage} numberOfLines={1}>
-            {item.lastMessage?.text || 'No messages yet'}
+            {subtitleText}
           </Text>
         </View>
       </TouchableOpacity>
@@ -167,6 +189,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 15,
+  },
+  groupAvatar: {
+    backgroundColor: '#128C7E',
   },
   avatarText: {
     color: '#fff',
