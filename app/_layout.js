@@ -1,13 +1,17 @@
-import { Slot } from 'expo-router';
+import { Slot, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, ActivityIndicator, View } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { startNetworkMonitoring, stopNetworkMonitoring } from '../utils/networkMonitor';
 import { useAuthStore } from '../store/authStore';
+import { useChatStore } from '../store/chatStore';
 import { database } from '../utils/database';
 
 export default function RootLayout() {
   const appState = useRef(AppState.currentState);
-  const { user, setUserOnlineStatus } = useAuthStore();
+  const router = useRouter();
+  const { user, setUserOnlineStatus, registerPushToken } = useAuthStore();
+  const { updateBadgeCount } = useChatStore();
   const [dbInitialized, setDbInitialized] = useState(false);
 
   useEffect(() => {
@@ -26,6 +30,37 @@ export default function RootLayout() {
 
     initDatabase();
   }, []);
+
+  // Register for push notifications when user logs in
+  useEffect(() => {
+    if (user && dbInitialized) {
+      registerPushToken();
+    }
+  }, [user, dbInitialized]);
+
+  // Handle notification taps (deep linking)
+  useEffect(() => {
+    if (!dbInitialized) return;
+
+    // Handle notification tap when app is foregrounded or opened from closed state
+    const notificationResponseSubscription = Notifications.addNotificationResponseReceivedListener(
+      response => {
+        const conversationId = response.notification.request.content.data?.conversationId;
+        
+        if (conversationId) {
+          console.log('📱 Notification tapped, navigating to chat:', conversationId);
+          // Use setTimeout to ensure navigation happens after any pending navigations
+          setTimeout(() => {
+            router.push(`/chat/${conversationId}`);
+          }, 100);
+        }
+      }
+    );
+
+    return () => {
+      notificationResponseSubscription.remove();
+    };
+  }, [dbInitialized]);
 
   useEffect(() => {
     if (!dbInitialized) return; // Wait for database
@@ -54,6 +89,9 @@ export default function RootLayout() {
         ) {
           console.log('App foregrounded - setting user online');
           setUserOnlineStatus(true);
+          
+          // Update badge count when app comes to foreground
+          updateBadgeCount(user.uid);
         }
       }
       

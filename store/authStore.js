@@ -8,11 +8,13 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebaseConfig';
+import { registerForPushNotifications } from '../utils/notifications';
 
 export const useAuthStore = create((set, get) => ({
   user: null,
   loading: true,
   error: null,
+  pushToken: null,
 
   initializeAuth: async () => {
     try {
@@ -127,10 +129,72 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
-  signOut: async () => {
+  registerPushToken: async () => {
+    try {
+      const { user, pushToken: existingToken } = get();
+      if (!user) {
+        console.log('No user logged in, skipping push token registration');
+        return null;
+      }
+
+      // Get push token
+      const token = await registerForPushNotifications();
+      if (!token) {
+        console.log('Failed to get push token (permission denied or simulator)');
+        return null;
+      }
+
+      // Only update if token changed
+      if (token === existingToken) {
+        console.log('Push token unchanged, skipping update');
+        return token;
+      }
+
+      // Save token to Firestore
+      await updateDoc(doc(db, 'users', user.uid), {
+        pushToken: token,
+        pushTokenUpdatedAt: serverTimestamp(),
+      });
+
+      // Update local state
+      set({ 
+        pushToken: token,
+        user: { ...user, pushToken: token }
+      });
+
+      console.log('✅ Push token registered and saved to Firestore');
+      return token;
+    } catch (error) {
+      console.error('Error registering push token:', error);
+      return null;
+    }
+  },
+
+  clearPushToken: async () => {
     try {
       const { user } = get();
+      if (!user) return;
+
+      // Clear token from Firestore
+      await updateDoc(doc(db, 'users', user.uid), {
+        pushToken: null,
+      });
+
+      // Clear local state
+      set({ pushToken: null });
+      console.log('✅ Push token cleared');
+    } catch (error) {
+      console.error('Error clearing push token:', error);
+    }
+  },
+
+  signOut: async () => {
+    try {
+      const { user, clearPushToken } = get();
       if (user) {
+        // Clear push token first
+        await clearPushToken();
+        
         // Set user offline before signing out
         await updateDoc(doc(db, 'users', user.uid), {
           online: false,
@@ -138,7 +202,7 @@ export const useAuthStore = create((set, get) => ({
         });
       }
       await firebaseSignOut(auth);
-      set({ user: null, error: null });
+      set({ user: null, error: null, pushToken: null });
       return { success: true };
     } catch (error) {
       console.error('Sign out error:', error);

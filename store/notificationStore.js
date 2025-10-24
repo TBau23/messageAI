@@ -9,7 +9,14 @@ export const useNotificationStore = create((set, get) => ({
     set({ currentChatId: chatId });
   },
 
-  // Show a notification
+  // Check if push notifications should be suppressed for a conversation
+  shouldSuppressPush: (conversationId) => {
+    const { currentChatId } = get();
+    // Suppress push if user is currently viewing this chat
+    return conversationId === currentChatId;
+  },
+
+  // Show an in-app notification
   showNotification: (message) => {
     const { currentChatId } = get();
     

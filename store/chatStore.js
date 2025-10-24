@@ -17,6 +17,7 @@ import {
 import { db } from '../firebaseConfig';
 import { useNotificationStore } from './notificationStore';
 import { database } from '../utils/database';
+import { sendPushNotification, setBadgeCount } from '../utils/notifications';
 
 const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -62,9 +63,12 @@ export const useChatStore = create((set, get) => ({
   isInitialLoad: true, // Track if this is the first load
   pendingMessages: {}, // conversationId -> pending/failed optimistic messages
   messageMetrics: {}, // localId -> { conversationId, sentAt, deliveryLatencyMs?, failed? }
+  unreadCount: 0, // Total unread messages across all conversations
 
   // Subscribe to user's conversations
   subscribeToConversations: (userId) => {
+    console.log(`🔔 subscribeToConversations called for user: ${userId}`);
+    
     // Reset initial load flag when subscribing
     set({ isInitialLoad: true });
     
@@ -126,7 +130,19 @@ export const useChatStore = create((set, get) => ({
             })
         );
         
-        set({ conversations: processedConvos });
+        // Deduplicate cache data before setting state (in case SQLite has duplicates)
+        const cacheConvoMap = processedConvos.reduce((acc, convo) => {
+          acc[convo.id] = convo;
+          return acc;
+        }, {});
+        const dedupedCacheConvos = Object.values(cacheConvoMap);
+        
+        console.log(`📊 Cache: ${processedConvos.length} total, ${dedupedCacheConvos.length} after dedup`);
+        if (processedConvos.length !== dedupedCacheConvos.length) {
+          console.warn('⚠️ Found duplicate conversations in cache!');
+        }
+        
+        set({ conversations: dedupedCacheConvos });
       }
     }).catch(err => {
       console.error('Error loading cached conversations:', err);
@@ -140,6 +156,7 @@ export const useChatStore = create((set, get) => ({
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
+      console.log(`📥 Firestore snapshot received: ${snapshot.docs.length} conversations`);
       const { previousConversations, isInitialLoad } = get();
       
       const convos = await Promise.all(
@@ -245,14 +262,22 @@ export const useChatStore = create((set, get) => ({
       // Merge: Firestore conversations + any cached ones not in Firestore yet
       const dedupedConvos = [...convos, ...cachedOnly];
       
-      // Update state
+      // Update state with deduplication
       const conversationsMap = dedupedConvos.reduce((acc, convo) => {
         acc[convo.id] = convo;
         return acc;
       }, {});
       
+      const finalConvos = Object.values(conversationsMap);
+      console.log(`📊 Final: ${dedupedConvos.length} merged, ${finalConvos.length} after dedup`);
+      
+      if (dedupedConvos.length !== finalConvos.length) {
+        console.warn('⚠️ Found duplicates during Firestore merge!');
+        console.warn('Duplicate IDs:', dedupedConvos.map(c => c.id).filter((id, idx, arr) => arr.indexOf(id) !== idx));
+      }
+      
       set({ 
-        conversations: Object.values(conversationsMap),
+        conversations: finalConvos,
         previousConversations: conversationsMap,
         isInitialLoad: false // Mark that we've completed the initial load
       });
@@ -562,6 +587,17 @@ export const useChatStore = create((set, get) => ({
         console.error('Error updating conversation metadata:', err);
       });
 
+      // Send push notifications to recipients (fire and forget)
+      // Get sender name for notification
+      const senderDoc = await getDoc(doc(db, 'users', senderId));
+      const senderName = senderDoc.exists() 
+        ? senderDoc.data().displayName || 'Someone'
+        : 'Someone';
+      
+      get().sendPushToRecipients(conversationId, senderName, text, senderId).catch((err) => {
+        console.error('Error sending push notifications:', err);
+      });
+
       return { success: true, messageId: messageRef.id };
     } catch (error) {
       console.error('Error sending message:', error);
@@ -713,5 +749,108 @@ export const useChatStore = create((set, get) => ({
       console.error('Error searching users:', error);
       return [];
     }
-  }
+  },
+
+  // Calculate unread message count across all conversations
+  calculateUnreadCount: (userId) => {
+    const { conversations, currentConversation } = get();
+    let totalUnread = 0;
+
+    conversations.forEach(convo => {
+      // Skip currently open conversation (those messages are "read")
+      if (convo.id === currentConversation) {
+        return;
+      }
+
+      const lastMsg = convo.lastMessage;
+      if (lastMsg && lastMsg.senderId !== userId) {
+        // Check if user has read this message
+        const readBy = lastMsg.readBy || [];
+        if (!readBy.includes(userId)) {
+          totalUnread++;
+        }
+      }
+    });
+
+    return totalUnread;
+  },
+
+  // Update badge count
+  updateBadgeCount: async (userId) => {
+    try {
+      const unreadCount = get().calculateUnreadCount(userId);
+      set({ unreadCount });
+      await setBadgeCount(unreadCount);
+      console.log(`📛 Badge count updated: ${unreadCount}`);
+    } catch (error) {
+      console.error('Error updating badge count:', error);
+    }
+  },
+
+  // Send push notification to recipients
+  sendPushToRecipients: async (conversationId, senderName, messageText, senderId) => {
+    try {
+      console.log(`📤 Attempting to send push for conversation ${conversationId}`);
+      
+      // Get conversation data
+      const conversationDoc = await getDoc(doc(db, 'conversations', conversationId));
+      if (!conversationDoc.exists()) {
+        console.log('❌ Conversation not found for push notification');
+        return;
+      }
+
+      const conversationData = conversationDoc.data();
+      const participants = conversationData.participants || [];
+      console.log(`👥 Participants: ${participants.join(', ')}`);
+
+      // Get recipients (exclude sender)
+      const recipients = participants.filter(id => id !== senderId);
+      console.log(`📨 Recipients (excluding sender): ${recipients.join(', ')}`);
+
+      // Send push to each recipient
+      for (const recipientId of recipients) {
+        console.log(`\n🔍 Processing recipient: ${recipientId}`);
+        
+        // Get recipient's push token
+        const recipientDoc = await getDoc(doc(db, 'users', recipientId));
+        if (!recipientDoc.exists()) {
+          console.log(`❌ Recipient user document not found`);
+          continue;
+        }
+
+        const recipientData = recipientDoc.data();
+        const pushToken = recipientData.pushToken;
+
+        if (!pushToken) {
+          console.log(`⚠️ No push token for user ${recipientId}`);
+          continue;
+        }
+
+        console.log(`✅ Push token found: ${pushToken.substring(0, 30)}...`);
+
+        // Send push notification (always send, let the system handle delivery)
+        // The in-app notification suppression happens on the receiving device
+        const badgeCount = 1;
+
+        console.log(`📤 Sending push notification to ${recipientId}...`);
+        const success = await sendPushNotification(pushToken, {
+          title: senderName,
+          body: messageText,
+          data: { conversationId },
+          badge: badgeCount,
+        });
+
+        if (success) {
+          console.log(`✅ Push notification sent successfully to ${recipientId}`);
+        } else {
+          console.log(`❌ Failed to send push notification to ${recipientId}`);
+        }
+      }
+      
+      console.log(`✅ Push notification batch complete\n`);
+    } catch (error) {
+      console.error('❌ Error sending push notifications:', error);
+      // Don't throw - push notification failures shouldn't block message sending
+    }
+  },
 }));

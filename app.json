@@ -37,6 +37,13 @@
           "color": "#ffffff"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4ac49f8c-1736-4b60-90d4-d0ca261b484b"
+      }
+    },
+    "owner": "tbizzer"
   }
 }

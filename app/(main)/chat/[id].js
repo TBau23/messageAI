@@ -290,6 +290,49 @@ export default function ChatScreen() {
     retryingMessagesRef.current.delete(message.localId);
   };
 
+  // Calculate which message should show the read receipt
+  // For direct chats: Find the most recent message from current user that's been read
+  // For group chats: Find the most recent message from current user that's been read by anyone
+  const getLastReadMessageId = () => {
+    if (!user || !messages.length) return null;
+    
+    // Filter to only messages from current user, in reverse order (newest first)
+    const myMessages = messages
+      .filter(msg => msg.senderId === user.uid)
+      .slice()
+      .reverse();
+    
+    if (myMessages.length === 0) return null;
+    
+    if (conversationData?.type === 'group') {
+      // For group chats: Find the most recent message read by at least one other participant
+      const otherParticipants = Object.keys(participantMap).filter(uid => uid !== user.uid);
+      
+      for (const msg of myMessages) {
+        const readBy = msg.readBy || [];
+        const hasBeenRead = otherParticipants.some(uid => readBy.includes(uid));
+        if (hasBeenRead) {
+          return msg.id;
+        }
+      }
+    } else {
+      // For direct chats: Find the most recent message read by the other user
+      const otherUserId = conversationData?.participants?.find(uid => uid !== user.uid);
+      if (!otherUserId) return null;
+      
+      for (const msg of myMessages) {
+        const readBy = msg.readBy || [];
+        if (readBy.includes(otherUserId)) {
+          return msg.id;
+        }
+      }
+    }
+    
+    return null;
+  };
+  
+  const lastReadMessageId = getLastReadMessageId();
+
   const renderMessage = ({ item }) => {
     if (!user) return null; // Guard against null user
     
@@ -303,6 +346,9 @@ export default function ChatScreen() {
     const isGroup = conversationData?.type === 'group';
 
     const isFailed = item.status === 'failed';
+    
+    // Only show read receipt on the most recently read message
+    const shouldShowReadReceipt = isMyMessage && !isFailed && item.id === lastReadMessageId;
 
     return (
       <View
@@ -346,7 +392,7 @@ export default function ChatScreen() {
             </TouchableOpacity>
           )}
         </View>
-        {isMyMessage && !isFailed && (
+        {shouldShowReadReceipt && (
           <MessageStatusIndicator
             message={item}
             isOwnMessage={isMyMessage}
@@ -432,7 +478,7 @@ export default function ChatScreen() {
       >
         {/* Custom Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <TouchableOpacity onPress={() => router.push('/')} style={styles.backButton}>
             <Text style={styles.backText}>←</Text>
           </TouchableOpacity>
           <View style={styles.headerInfo}>
@@ -662,6 +708,7 @@ const styles = StyleSheet.create({
   },
   myMessageBubble: {
     backgroundColor: '#DCF8C6',
+    alignSelf: 'flex-end',
   },
   otherMessageBubble: {
     backgroundColor: '#fff',

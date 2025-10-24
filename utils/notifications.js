@@ -1,17 +1,24 @@
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
- * Configure notification behavior
- * This determines how notifications are displayed when app is foregrounded
+ * Configure notification behavior when app is foregrounded
+ * 
+ * When app is in foreground, we use our custom in-app notification banner.
+ * System notifications should only appear when app is backgrounded/closed.
  */
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async () => {
+    // When app is foregrounded, suppress system notifications
+    // We handle notifications via our custom in-app banner (MessageNotification component)
+    return {
+      shouldShowAlert: false,  // Don't show system notification when app is open
+      shouldPlaySound: false,  // No sound when app is open
+      shouldSetBadge: true,    // Still update badge count
+    };
+  },
 });
 
 /**
@@ -44,8 +51,14 @@ export async function registerForPushNotifications() {
       return null;
     }
 
-    // Get the Expo push token
-    token = (await Notifications.getExpoPushTokenAsync()).data;
+    // Get the Expo push token with project ID
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+    if (!projectId) {
+      console.error('No projectId found in app.json. Please add it to extra.eas.projectId');
+      return null;
+    }
+
+    token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     console.log('✅ Expo push token obtained:', token);
 
     // Configure notification channel for Android

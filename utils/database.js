@@ -243,6 +243,39 @@ class Database {
       return null;
     }
   }
+
+  // Clear all cached data (useful for testing/debugging)
+  async clearAllCache() {
+    try {
+      console.log('🗑️ Clearing all SQLite cache...');
+      await this.db.execAsync(`
+        DELETE FROM messages;
+        DELETE FROM conversations;
+        DELETE FROM users;
+      `);
+      console.log('✅ All cache cleared');
+    } catch (error) {
+      console.error('Error clearing cache:', error);
+      throw error;
+    }
+  }
+
+  // Drop all tables and recreate (nuclear option)
+  async resetDatabase() {
+    try {
+      console.log('🗑️ Resetting database (dropping all tables)...');
+      await this.db.execAsync(`
+        DROP TABLE IF EXISTS messages;
+        DROP TABLE IF EXISTS conversations;
+        DROP TABLE IF EXISTS users;
+      `);
+      await this.createTables();
+      console.log('✅ Database reset complete');
+    } catch (error) {
+      console.error('Error resetting database:', error);
+      throw error;
+    }
+  }
 }
 
 export const database = new Database();

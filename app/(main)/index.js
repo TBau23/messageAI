@@ -1,10 +1,11 @@
-import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/authStore';
 import { useChatStore } from '../../store/chatStore';
 import { format } from 'date-fns';
+import { database } from '../../utils/database';
 
 export default function ChatListScreen() {
   const router = useRouter();
@@ -22,6 +23,29 @@ export default function ChatListScreen() {
   const handleSignOut = async () => {
     await signOut();
     router.replace('/login');
+  };
+
+  const handleClearCache = async () => {
+    Alert.alert(
+      'Clear Cache',
+      'This will delete all locally cached data. Messages will be reloaded from Firestore.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await database.clearAllCache();
+              setShowMenu(false);
+              Alert.alert('Success', 'Cache cleared! Pull down to refresh.');
+            } catch (error) {
+              Alert.alert('Error', 'Failed to clear cache: ' + error.message);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const renderConversation = ({ item }) => {
@@ -97,6 +121,9 @@ export default function ChatListScreen() {
 
       {showMenu && (
         <View style={styles.menu}>
+          <TouchableOpacity style={styles.menuItem} onPress={handleClearCache}>
+            <Text style={styles.menuItemText}>Clear Cache</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.menuItem} onPress={handleSignOut}>
             <Text style={styles.menuItemText}>Sign Out</Text>
           </TouchableOpacity>
