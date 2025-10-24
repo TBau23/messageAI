@@ -239,8 +239,11 @@ export default function ChatScreen() {
   useEffect(() => {
     if (id && messages.length > 0 && user) {
       // Find unread messages (not in readBy array)
+      // Only mark messages that are confirmed from Firestore (not cache-only)
       const unreadMessages = messages.filter(
-        msg => msg.senderId !== user.uid && !(msg.readBy || []).includes(user.uid)
+        msg => msg.senderId !== user.uid && 
+               !(msg.readBy || []).includes(user.uid) &&
+               !msg._fromCache // Skip cache-only messages
       );
       
       if (unreadMessages.length > 0) {

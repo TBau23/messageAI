@@ -16,6 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import { useNotificationStore } from './notificationStore';
+import { database } from '../utils/database';
 
 const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -67,6 +68,71 @@ export const useChatStore = create((set, get) => ({
     // Reset initial load flag when subscribing
     set({ isInitialLoad: true });
     
+    // 1. Load from SQLite cache first (instant display)
+    database.getConversations().then(async (cachedConversations) => {
+      if (cachedConversations.length > 0) {
+        console.log(`📦 Loaded ${cachedConversations.length} conversations from cache`);
+        
+        // Process cached conversations with participant details
+        const processedConvos = await Promise.all(
+          cachedConversations
+            .filter(convo => convo.participants.includes(userId))
+            .map(async (convo) => {
+              if (convo.type === 'group') {
+                const participantDetails = await Promise.all(
+                  convo.participants
+                    .filter(id => id !== userId)
+                    .map(async (participantId) => {
+                      const cached = await database.getUser(participantId);
+                      if (cached) return cached;
+                      
+                      // Fallback to Firestore if not in cache
+                      const userDoc = await getDoc(doc(db, 'users', participantId));
+                      return {
+                        uid: participantId,
+                        ...userDoc.data()
+                      };
+                    })
+                );
+
+                return {
+                  ...convo,
+                  participantDetails,
+                  _fromCache: true // Mark as cache-loaded
+                };
+              } else {
+                const otherParticipantId = convo.participants.find(id => id !== userId);
+                const cached = await database.getUser(otherParticipantId);
+                
+                if (cached) {
+                  return {
+                    ...convo,
+                    otherUser: cached,
+                    _fromCache: true // Mark as cache-loaded
+                  };
+                }
+                
+                // Fallback to Firestore if not in cache
+                const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
+                return {
+                  ...convo,
+                  otherUser: {
+                    uid: otherParticipantId,
+                    ...userDoc.data()
+                  },
+                  _fromCache: true // Mark as cache-loaded
+                };
+              }
+            })
+        );
+        
+        set({ conversations: processedConvos });
+      }
+    }).catch(err => {
+      console.error('Error loading cached conversations:', err);
+    });
+    
+    // 2. Subscribe to Firestore (for real-time updates)
     const q = query(
       collection(db, 'conversations'),
       where('participants', 'array-contains', userId),
@@ -79,6 +145,10 @@ export const useChatStore = create((set, get) => ({
       const convos = await Promise.all(
         snapshot.docs.map(async (docSnap) => {
           const data = docSnap.data();
+          const convo = { id: docSnap.id, ...data };
+          
+          // Cache conversation to SQLite
+          await database.upsertConversation(convo);
           
           if (data.type === 'group') {
             // For group chats, fetch all participant details
@@ -87,10 +157,15 @@ export const useChatStore = create((set, get) => ({
                 .filter(id => id !== userId)
                 .map(async (participantId) => {
                   const userDoc = await getDoc(doc(db, 'users', participantId));
-                  return {
+                  const userData = {
                     uid: participantId,
                     ...userDoc.data()
                   };
+                  
+                  // Cache user to SQLite
+                  await database.upsertUser(userData);
+                  
+                  return userData;
                 })
             );
 
@@ -104,15 +179,18 @@ export const useChatStore = create((set, get) => ({
             // For direct chats, get other participant's info
             const otherParticipantId = data.participants.find(id => id !== userId);
             const userDoc = await getDoc(doc(db, 'users', otherParticipantId));
-            const otherUser = userDoc.data();
+            const otherUser = {
+              uid: otherParticipantId,
+              ...userDoc.data()
+            };
+            
+            // Cache user to SQLite
+            await database.upsertUser(otherUser);
 
             return {
               id: docSnap.id,
               ...data,
-              otherUser: {
-                uid: otherParticipantId,
-                ...otherUser
-              }
+              otherUser
             };
           }
         })
@@ -155,14 +233,26 @@ export const useChatStore = create((set, get) => ({
         });
       }
 
+      // Deduplicate: Remove any cached conversations that are now in Firestore
+      // Firestore data is always the source of truth
+      const firestoreIds = new Set(convos.map(c => c.id));
+      
+      const currentConversations = get().conversations || [];
+      const cachedOnly = currentConversations.filter(
+        c => c._fromCache && !firestoreIds.has(c.id)
+      );
+      
+      // Merge: Firestore conversations + any cached ones not in Firestore yet
+      const dedupedConvos = [...convos, ...cachedOnly];
+      
       // Update state
-      const conversationsMap = convos.reduce((acc, convo) => {
+      const conversationsMap = dedupedConvos.reduce((acc, convo) => {
         acc[convo.id] = convo;
         return acc;
       }, {});
       
       set({ 
-        conversations: convos,
+        conversations: Object.values(conversationsMap),
         previousConversations: conversationsMap,
         isInitialLoad: false // Mark that we've completed the initial load
       });
@@ -173,12 +263,43 @@ export const useChatStore = create((set, get) => ({
 
   // Subscribe to messages in a conversation
   subscribeToMessages: (conversationId, userId) => {
+    set({ currentConversation: conversationId });
+
+    // 1. Load from SQLite cache first (instant display)
+    database.getMessagesByConversation(conversationId).then(cachedMessages => {
+      if (cachedMessages.length > 0) {
+        console.log(`📦 Loaded ${cachedMessages.length} messages from cache`);
+        
+        // Process cached messages with pending messages
+        const state = get();
+        const pendingForConversation = state.pendingMessages[conversationId] || [];
+        
+        const cachedProcessed = cachedMessages.map(message => ({
+          ...message,
+          orderTimestamp: getOrderTimestamp(message),
+          _fromCache: true, // Mark as cache-sourced
+        }));
+
+        const pendingProcessed = pendingForConversation.map((message) => ({
+          ...message,
+          orderTimestamp: getOrderTimestamp(message, state.messageMetrics[message.localId]),
+        }));
+
+        const combined = [...cachedProcessed, ...pendingProcessed].sort(
+          (a, b) => (a.orderTimestamp || 0) - (b.orderTimestamp || 0)
+        );
+        
+        set({ messages: combined });
+      }
+    }).catch(err => {
+      console.error('Error loading cached messages:', err);
+    });
+
+    // 2. Subscribe to Firestore (for real-time updates)
     const q = query(
       collection(db, `conversations/${conversationId}/messages`),
       orderBy('timestamp', 'asc')
     );
-
-    set({ currentConversation: conversationId });
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       const docs = snapshot.docs.map(docSnap => {
@@ -188,6 +309,14 @@ export const useChatStore = create((set, get) => ({
           ...data
         };
       });
+
+      // Cache messages to SQLite as they arrive
+      for (const message of docs) {
+        await database.upsertMessage({
+          ...message,
+          conversationId: conversationId // Add the conversation ID from the path
+        });
+      }
 
       // Mark messages as delivered for the current user
       const deliveryUpdates = [];
@@ -498,27 +627,36 @@ export const useChatStore = create((set, get) => ({
   // Mark messages as read
   markMessagesAsRead: async (conversationId, messageIds, userId) => {
     try {
+      // Filter out temp IDs and cached-only messages
       const validMessageIds = (messageIds || []).filter(
-        (messageId) => messageId && !messageId.startsWith('temp_')
+        (messageId) => messageId && !messageId.startsWith('temp_') && messageId.length > 10
       );
 
       if (validMessageIds.length === 0) {
         return;
       }
 
-      const promises = validMessageIds.map((messageId) => {
-        const messageRef = doc(db, `conversations/${conversationId}/messages/${messageId}`);
-        return updateDoc(messageRef, {
-          readBy: arrayUnion(userId),
-          [`readReceipts.${userId}`]: serverTimestamp()
-        }).catch((error) => {
-          if (typeof __DEV__ !== 'undefined' && __DEV__) {
-            console.warn('Skipping read receipt update:', error.message);
-          }
+      // Batch updates in chunks to avoid overwhelming Firestore
+      const chunkSize = 10;
+      for (let i = 0; i < validMessageIds.length; i += chunkSize) {
+        const chunk = validMessageIds.slice(i, i + chunkSize);
+        
+        const promises = chunk.map((messageId) => {
+          const messageRef = doc(db, `conversations/${conversationId}/messages/${messageId}`);
+          return updateDoc(messageRef, {
+            readBy: arrayUnion(userId),
+            [`readReceipts.${userId}`]: serverTimestamp()
+          }).catch((error) => {
+            // Silently skip non-existent messages (common with cache)
+            // Only log in dev if it's not a "not found" error
+            if (typeof __DEV__ !== 'undefined' && __DEV__ && !error.message?.includes('No document')) {
+              console.warn('Read receipt update error:', error.message);
+            }
+          });
         });
-      });
 
-      await Promise.all(promises);
+        await Promise.allSettled(promises);
+      }
     } catch (error) {
       console.error('Error marking messages as read:', error);
     }

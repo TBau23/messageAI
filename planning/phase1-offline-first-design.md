@@ -1,53 +1,57 @@
-# Phase 1: Offline-First Architecture
+# Phase 1: Offline-First Architecture (SIMPLIFIED)
 ## Technical Design Document
 
 **Goal**: Achieve 12/12 points on "Offline Support & Persistence"  
-**Target**: Sub-1 second sync, zero message loss, graceful offline handling
+**Scope**: Pragmatic implementation for Expo Go evaluation  
+**Effort**: 1 day (down from 2.5 days)
 
 ---
 
 ## 1. ARCHITECTURE OVERVIEW
 
-### Current State
-- Messages stored only in Firestore
-- Optimistic updates in Zustand (memory only)
-- Network monitoring via NetInfo
-- No true offline persistence
+### Current State (What Already Works)
+- ✅ Messages stored in Firestore
+- ✅ Optimistic updates in Zustand (memory only)
+- ✅ Network monitoring via NetInfo
+- ✅ **Firestore SDK handles offline queueing** (messages send when reconnected)
+- ❌ No local cache (can't load history offline)
+- ❌ Messages lost on force quit while offline
 
-### Target State
+### Target State (Simplified)
 ```
 User Action
     ↓
 Zustand Store (UI State)
     ↓
-SQLite (Local Truth) ← Sync Engine → Firestore (Cloud Truth)
+SQLite Cache (Fast Local Reads) + Firestore SDK Queue (Handles Offline Writes)
     ↓
-Real-time Listeners
+Firestore (Cloud Truth)
 ```
 
-**Key Principle**: SQLite is the primary source of truth. Firestore is the sync layer.
+**Key Principle**: SQLite is a **read cache** for instant loading. Firestore SDK handles write queueing (already works!).
+
+### What Changed from Original Design
+- ❌ No complex sync engine (Firestore SDK does this)
+- ❌ No sync_queue table (Firestore SDK has internal queue)
+- ❌ No retry logic (Firestore SDK handles it)
+- ✅ Simple write-through cache pattern
+- ✅ Focus on instant loading + offline history
+- ✅ Trust Firestore SDK for offline write queueing
 
 ---
 
-## 2. DATABASE SCHEMA
+## 2. DATABASE SCHEMA (SIMPLIFIED)
 
-### SQLite Tables
+### SQLite Tables - Cache Only
 
 ```sql
--- Messages table
+-- Messages table (simple cache)
 CREATE TABLE messages (
-  id TEXT PRIMARY KEY,              -- Firestore ID (null if not synced yet)
-  local_id TEXT UNIQUE NOT NULL,    -- Client-generated UUID
+  id TEXT PRIMARY KEY,              -- Firestore ID
   conversation_id TEXT NOT NULL,
   sender_id TEXT NOT NULL,
   text TEXT NOT NULL,
   timestamp INTEGER NOT NULL,       -- Unix milliseconds
-  client_sent_at INTEGER NOT NULL,
-  
-  -- Sync status
-  sync_status TEXT NOT NULL,        -- 'synced', 'pending', 'failed'
-  retry_count INTEGER DEFAULT 0,
-  last_retry_at INTEGER,
   
   -- Delivery tracking (stored as JSON strings)
   delivered_to TEXT,                -- JSON array of user IDs
@@ -55,26 +59,24 @@ CREATE TABLE messages (
   delivered_receipts TEXT,          -- JSON object {userId: timestamp}
   read_receipts TEXT,               -- JSON object {userId: timestamp}
   
-  -- Metadata
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  
-  INDEX idx_conversation_timestamp (conversation_id, timestamp),
-  INDEX idx_sync_status (sync_status)
+  -- Cache metadata
+  cached_at INTEGER NOT NULL
 );
+
+CREATE INDEX idx_messages_conversation ON messages(conversation_id, timestamp DESC);
 
 -- Conversations table (cached from Firestore)
 CREATE TABLE conversations (
   id TEXT PRIMARY KEY,
   type TEXT NOT NULL,               -- 'direct' | 'group'
-  name TEXT,                        -- Group name
+  name TEXT,                        -- Group name (for groups)
   participants TEXT NOT NULL,       -- JSON array of user IDs
   last_message TEXT,                -- JSON object
   updated_at INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  
-  INDEX idx_updated_at (updated_at DESC)
+  cached_at INTEGER NOT NULL
 );
+
+CREATE INDEX idx_conversations_updated ON conversations(updated_at DESC);
 
 -- Users table (cached participant data)
 CREATE TABLE users (
@@ -83,127 +85,71 @@ CREATE TABLE users (
   display_name TEXT,
   online INTEGER DEFAULT 0,         -- 0 or 1 (SQLite boolean)
   last_seen INTEGER,
-  profile_photo_url TEXT,
-  cached_at INTEGER NOT NULL,
-  
-  INDEX idx_display_name (display_name)
-);
-
--- Sync queue (explicit queue for failed operations)
-CREATE TABLE sync_queue (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  operation_type TEXT NOT NULL,     -- 'send_message', 'mark_delivered', 'mark_read'
-  entity_type TEXT NOT NULL,        -- 'message', 'conversation', 'user'
-  entity_id TEXT NOT NULL,
-  payload TEXT NOT NULL,            -- JSON payload
-  retry_count INTEGER DEFAULT 0,
-  last_retry_at INTEGER,
-  created_at INTEGER NOT NULL,
-  
-  INDEX idx_operation_type (operation_type),
-  INDEX idx_retry (retry_count, last_retry_at)
+  cached_at INTEGER NOT NULL
 );
 ```
+
+**Note**: No sync_queue table needed - Firestore SDK handles offline queueing internally!
 
 ---
 
-## 3. DATA FLOW
+## 3. DATA FLOW (SIMPLIFIED)
 
-### 3.1 Sending a Message (Online)
-
-```
-1. User types → Press Send
-   ↓
-2. Generate local_id (UUID)
-   ↓
-3. Insert to SQLite (sync_status: 'pending')
-   ↓
-4. Update Zustand (optimistic UI)
-   ↓
-5. Add to sync_queue (operation: 'send_message')
-   ↓
-6. Sync engine picks up queue item
-   ↓
-7. POST to Firestore addDoc()
-   ↓
-8. On Success:
-   - Update SQLite (sync_status: 'synced', id: firestore_id)
-   - Remove from sync_queue
-   ↓
-9. On Failure:
-   - Update retry_count
-   - Schedule exponential backoff retry
-```
-
-### 3.2 Sending a Message (Offline)
+### 3.1 Sending a Message (Write-Through Cache)
 
 ```
 1. User types → Press Send
    ↓
-2. Network monitor detects offline
+2. Update Zustand (optimistic UI - existing code)
    ↓
-3. Insert to SQLite (sync_status: 'pending')
+3. Call Firestore addDoc() - Firestore SDK handles queueing!
    ↓
-4. Update Zustand with status: 'queued'
-   ↓
-5. Add to sync_queue
-   ↓
-6. Show "Message queued" UI indicator
-   ↓
-[User goes online]
-   ↓
-7. Network monitor detects connection
-   ↓
-8. Sync engine starts processing queue
-   ↓
-9. Batch send all pending messages
-   ↓
-10. Update statuses as messages sync
+4. When onSnapshot receives confirmation:
+   - Write to SQLite cache
+   - Update Zustand with final state
 ```
 
-### 3.3 Receiving Messages (Real-time)
+**Key insight**: Let Firestore SDK handle offline queueing (it already works perfectly!)
+
+### 3.2 Receiving Messages (Cache-First Read)
 
 ```
-1. Firestore onSnapshot fires
+1. User opens chat
    ↓
-2. New message detected
+2. Load from SQLite cache immediately (<100ms)
+   - Display cached messages
+   - Show "Loading..." if empty cache
    ↓
-3. Check if message exists in SQLite (by local_id or id)
+3. Subscribe to Firestore onSnapshot
    ↓
-4. If exists:
-   - Update sync_status to 'synced'
-   - Reconcile delivery/read receipts
-   ↓
-5. If new:
-   - Insert to SQLite (sync_status: 'synced')
-   - Add to Zustand messages array
-   ↓
-6. Mark as delivered (update SQLite + queue sync)
+4. As messages arrive:
+   - Update SQLite cache (upsert)
+   - Update Zustand
+   - UI updates reactively
 ```
 
-### 3.4 App Restart
+### 3.3 App Restart / Offline Access
 
 ```
 1. App launches
    ↓
 2. Load conversations from SQLite
+   - Instant display (<200ms)
    ↓
-3. Display cached data immediately (<200ms)
+3. User taps conversation
    ↓
-4. Establish Firestore listeners
+4. Load messages from SQLite
+   - Full history available offline
    ↓
-5. Sync engine checks sync_queue
-   ↓
-6. Process any pending operations
-   ↓
-7. Firestore snapshot updates arrive
-   ↓
-8. Reconcile SQLite with Firestore
+5. When online, Firestore syncs in background
+   - Updates cache as new messages arrive
 ```
+
+**Result**: Chat history works offline, loads instantly
 
 ---
 
-## 4. IMPLEMENTATION DETAILS
+## 4. IMPLEMENTATION DETAILS (SIMPLIFIED)
 
 ### 4.1 Database Layer (`/utils/database.js`)
 
@@ -221,227 +167,238 @@ class Database {
   }
 
   async createTables() {
-    // Execute CREATE TABLE statements
-    await this.db.execAsync(/* SQL from section 2 */);
+    await this.db.execAsync(`
+      CREATE TABLE IF NOT EXISTS messages (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        sender_id TEXT NOT NULL,
+        text TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        delivered_to TEXT,
+        read_by TEXT,
+        delivered_receipts TEXT,
+        read_receipts TEXT,
+        cached_at INTEGER NOT NULL
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation 
+      ON messages(conversation_id, timestamp DESC);
+      
+      CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        name TEXT,
+        participants TEXT NOT NULL,
+        last_message TEXT,
+        updated_at INTEGER NOT NULL,
+        cached_at INTEGER NOT NULL
+      );
+      
+      CREATE INDEX IF NOT EXISTS idx_conversations_updated 
+      ON conversations(updated_at DESC);
+      
+      CREATE TABLE IF NOT EXISTS users (
+        uid TEXT PRIMARY KEY,
+        email TEXT,
+        display_name TEXT,
+        online INTEGER DEFAULT 0,
+        last_seen INTEGER,
+        cached_at INTEGER NOT NULL
+      );
+    `);
   }
 
   // Message operations
-  async insertMessage(message) { /* ... */ }
-  async updateMessageSyncStatus(localId, status, firestoreId = null) { /* ... */ }
-  async getMessagesByConversation(conversationId, limit = 50, offset = 0) { /* ... */ }
-  async getPendingMessages() { /* ... */ }
+  async upsertMessage(message) {
+    // Insert or replace - simple cache update
+    await this.db.runAsync(
+      `INSERT OR REPLACE INTO messages 
+       (id, conversation_id, sender_id, text, timestamp, delivered_to, 
+        read_by, delivered_receipts, read_receipts, cached_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        message.id,
+        message.conversationId || message.conversation_id,
+        message.senderId || message.sender_id,
+        message.text,
+        typeof message.timestamp === 'number' ? message.timestamp : message.timestamp?.toMillis?.() || Date.now(),
+        JSON.stringify(message.deliveredTo || message.delivered_to || []),
+        JSON.stringify(message.readBy || message.read_by || []),
+        JSON.stringify(message.deliveredReceipts || message.delivered_receipts || {}),
+        JSON.stringify(message.readReceipts || message.read_receipts || {}),
+        Date.now()
+      ]
+    );
+  }
+
+  async getMessagesByConversation(conversationId) {
+    const rows = await this.db.getAllAsync(
+      'SELECT * FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC',
+      [conversationId]
+    );
+    
+    return rows.map(row => ({
+      id: row.id,
+      conversationId: row.conversation_id,
+      senderId: row.sender_id,
+      text: row.text,
+      timestamp: new Date(row.timestamp),
+      deliveredTo: JSON.parse(row.delivered_to || '[]'),
+      readBy: JSON.parse(row.read_by || '[]'),
+      deliveredReceipts: JSON.parse(row.delivered_receipts || '{}'),
+      readReceipts: JSON.parse(row.read_receipts || '{}'),
+    }));
+  }
   
   // Conversation operations
-  async upsertConversation(conversation) { /* ... */ }
-  async getConversations(userId) { /* ... */ }
-  
-  // Sync queue operations
-  async addToSyncQueue(operation) { /* ... */ }
-  async getQueuedOperations() { /* ... */ }
-  async removeFromQueue(id) { /* ... */ }
+  async upsertConversation(conversation) {
+    await this.db.runAsync(
+      `INSERT OR REPLACE INTO conversations 
+       (id, type, name, participants, last_message, updated_at, cached_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        conversation.id,
+        conversation.type,
+        conversation.name || null,
+        JSON.stringify(conversation.participants || []),
+        JSON.stringify(conversation.lastMessage || conversation.last_message || null),
+        typeof conversation.updatedAt === 'number' ? conversation.updatedAt : conversation.updatedAt?.toMillis?.() || Date.now(),
+        Date.now()
+      ]
+    );
+  }
+
+  async getConversations() {
+    const rows = await this.db.getAllAsync(
+      'SELECT * FROM conversations ORDER BY updated_at DESC'
+    );
+    
+    return rows.map(row => ({
+      id: row.id,
+      type: row.type,
+      name: row.name,
+      participants: JSON.parse(row.participants),
+      lastMessage: JSON.parse(row.last_message || 'null'),
+      updatedAt: new Date(row.updated_at),
+    }));
+  }
   
   // User cache operations
-  async upsertUser(user) { /* ... */ }
-  async getUser(uid) { /* ... */ }
-}
-
-export const db = new Database();
-```
-
-### 4.2 Sync Engine (`/utils/syncEngine.js`)
-
-```javascript
-import { db } from './database';
-import { collection, addDoc, updateDoc } from 'firebase/firestore';
-import { useNetworkStore } from './networkMonitor';
-
-class SyncEngine {
-  constructor() {
-    this.isProcessing = false;
-    this.retryTimeouts = new Map(); // localId -> timeout
-  }
-
-  async start() {
-    // Process queue on app start
-    await this.processQueue();
-    
-    // Listen for network changes
-    useNetworkStore.subscribe((state) => {
-      if (state.isOnline && !this.isProcessing) {
-        this.processQueue();
-      }
-    });
-  }
-
-  async processQueue() {
-    if (!useNetworkStore.getState().isOnline) return;
-    if (this.isProcessing) return;
-    
-    this.isProcessing = true;
-    
-    try {
-      const operations = await db.getQueuedOperations();
-      
-      for (const op of operations) {
-        await this.processOperation(op);
-      }
-    } finally {
-      this.isProcessing = false;
-    }
-  }
-
-  async processOperation(op) {
-    try {
-      switch (op.operation_type) {
-        case 'send_message':
-          await this.syncMessage(op);
-          break;
-        case 'mark_delivered':
-          await this.syncDeliveryReceipt(op);
-          break;
-        case 'mark_read':
-          await this.syncReadReceipt(op);
-          break;
-      }
-      
-      // Success - remove from queue
-      await db.removeFromQueue(op.id);
-      
-    } catch (error) {
-      // Failure - update retry count
-      await db.updateQueueRetry(op.id);
-      
-      // Schedule retry with exponential backoff
-      const delay = Math.min(1000 * Math.pow(2, op.retry_count), 30000);
-      this.scheduleRetry(op, delay);
-    }
-  }
-
-  async syncMessage(op) {
-    const payload = JSON.parse(op.payload);
-    const { conversationId, message } = payload;
-    
-    // Send to Firestore
-    const docRef = await addDoc(
-      collection(db, `conversations/${conversationId}/messages`),
-      {
-        text: message.text,
-        senderId: message.sender_id,
-        timestamp: serverTimestamp(),
-        localId: message.local_id,
-        clientSentAt: message.client_sent_at,
-        // ... other fields
-      }
-    );
-    
-    // Update SQLite with Firestore ID
-    await db.updateMessageSyncStatus(
-      message.local_id,
-      'synced',
-      docRef.id
+  async upsertUser(user) {
+    await this.db.runAsync(
+      `INSERT OR REPLACE INTO users 
+       (uid, email, display_name, online, last_seen, cached_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        user.uid,
+        user.email || null,
+        user.displayName || user.display_name || null,
+        user.online ? 1 : 0,
+        typeof user.lastSeen === 'number' ? user.lastSeen : user.lastSeen?.toMillis?.() || null,
+        Date.now()
+      ]
     );
   }
 
-  scheduleRetry(op, delay) {
-    const timeout = setTimeout(() => {
-      this.processOperation(op);
-    }, delay);
+  async getUser(uid) {
+    const row = await this.db.getFirstAsync(
+      'SELECT * FROM users WHERE uid = ?',
+      [uid]
+    );
     
-    this.retryTimeouts.set(op.id, timeout);
-  }
-
-  stop() {
-    // Clear all retry timeouts
-    this.retryTimeouts.forEach(timeout => clearTimeout(timeout));
-    this.retryTimeouts.clear();
+    if (!row) return null;
+    
+    return {
+      uid: row.uid,
+      email: row.email,
+      displayName: row.display_name,
+      online: row.online === 1,
+      lastSeen: row.last_seen ? new Date(row.last_seen) : null,
+    };
   }
 }
 
-export const syncEngine = new SyncEngine();
+export const database = new Database();
 ```
 
-### 4.3 Updated ChatStore (`/store/chatStore.js`)
+**Note**: No sync engine needed! Firestore SDK handles all offline queueing.
+
+### 4.2 Updated ChatStore (`/store/chatStore.js`)
 
 ```javascript
-import { db } from '../utils/database';
-import { syncEngine } from '../utils/syncEngine';
+import { database } from '../utils/database';
 
 export const useChatStore = create((set, get) => ({
   // ... existing state ...
   
-  sendMessage: async (conversationId, senderId, text) => {
-    const localId = uuid.v4();
-    const sentAt = Date.now();
-    
-    const message = {
-      local_id: localId,
-      conversation_id: conversationId,
-      sender_id: senderId,
-      text,
-      timestamp: sentAt,
-      client_sent_at: sentAt,
-      sync_status: 'pending',
-      delivered_to: JSON.stringify([senderId]),
-      read_by: JSON.stringify([senderId]),
-      created_at: sentAt,
-      updated_at: sentAt,
-    };
-    
-    // 1. Insert to SQLite
-    await db.insertMessage(message);
-    
-    // 2. Update Zustand (optimistic UI)
-    set((state) => ({
-      messages: [...state.messages, {
-        ...message,
-        status: 'sending',
-      }]
-    }));
-    
-    // 3. Add to sync queue
-    await db.addToSyncQueue({
-      operation_type: 'send_message',
-      entity_type: 'message',
-      entity_id: localId,
-      payload: JSON.stringify({ conversationId, message }),
-      created_at: Date.now(),
-    });
-    
-    // 4. Trigger sync
-    syncEngine.processQueue();
-    
-    return { success: true, localId };
-  },
+  // sendMessage: KEEP EXISTING CODE
+  // Firestore SDK already handles offline queueing perfectly!
+  // Just let onSnapshot cache to SQLite when confirmed
   
   subscribeToMessages: (conversationId, userId) => {
-    // Load from SQLite first (instant display)
-    db.getMessagesByConversation(conversationId).then(messages => {
-      set({ messages });
+    set({ currentConversation: conversationId });
+    
+    // 1. Load from cache first (instant display)
+    database.getMessagesByConversation(conversationId).then(cachedMessages => {
+      if (cachedMessages.length > 0) {
+        console.log(`Loaded ${cachedMessages.length} messages from cache`);
+        set({ messages: cachedMessages });
+      }
     });
     
-    // Then subscribe to Firestore (for real-time updates)
+    // 2. Subscribe to Firestore (for real-time updates)
     const q = query(
       collection(db, `conversations/${conversationId}/messages`),
       orderBy('timestamp', 'asc')
     );
     
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      // Process Firestore changes
-      for (const change of snapshot.docChanges()) {
-        const firestoreMessage = {
-          id: change.doc.id,
-          ...change.doc.data()
-        };
-        
-        if (change.type === 'added' || change.type === 'modified') {
-          // Upsert to SQLite
-          await db.upsertMessage(firestoreMessage);
-        }
+      // Update cache as messages arrive
+      for (const doc of snapshot.docs) {
+        await database.upsertMessage({
+          id: doc.id,
+          ...doc.data()
+        });
       }
       
-      // Reload from SQLite (single source of truth)
-      const messages = await db.getMessagesByConversation(conversationId);
+      // Reload from cache (single source of truth)
+      const messages = await database.getMessagesByConversation(conversationId);
       set({ messages });
+      
+      // Mark as delivered (existing logic)
+      // ...
+    });
+    
+    return unsubscribe;
+  },
+  
+  subscribeToConversations: (userId) => {
+    // Load from cache first
+    database.getConversations().then(cached => {
+      if (cached.length > 0) {
+        console.log(`Loaded ${cached.length} conversations from cache`);
+        // Process cached conversations...
+        set({ conversations: cached });
+      }
+    });
+    
+    // Subscribe to Firestore (existing code)
+    const q = query(/*...*/);
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      // Cache each conversation
+      const convos = await Promise.all(
+        snapshot.docs.map(async (docSnap) => {
+          const data = docSnap.data();
+          const convo = { id: docSnap.id, ...data };
+          
+          // Update cache
+          await database.upsertConversation(convo);
+          
+          return convo;
+        })
+      );
+      
+      set({ conversations: convos });
     });
     
     return unsubscribe;
