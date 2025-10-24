@@ -1,3 +1,5 @@
 --offline status is ugly
 -- auth errors should have better ux
--- can we improve speed of offline messages coming through on reconnect?
+-- add and remove people from group chat once created
+-- user profile page
+

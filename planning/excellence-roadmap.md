@@ -47,7 +47,6 @@
 - Fix optimistic update bug, implement delivery acknowledgements, and ensure `deliveredTo`/`readBy` updates on receipt (`store/chatStore.js`).
 - Add typing indicators, message retry states, and latency instrumentation.
 - Replace one-off `getDoc` presence lookups with real-time subscriptions and introduction of a presence/typing sub-collection.
-- Introduce automated load/offline regression tests (smoke scripts, Detox/e2e scenarios).
 
 ### Phase 2 – Offline & Mobile Experience
 - Introduce local cache (Expo SQLite) for conversations/messages with delta sync strategy.
