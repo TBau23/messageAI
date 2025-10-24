@@ -26,12 +26,12 @@ This is a hard gate. To pass the MVP checkpoint, you must have:
 * Message read receipts
 * Push notifications working (at least in foreground)
 * Deployment: Running on local emulator/simulator with deployed backend (TestFlight/APK/Expo Go if possible, but not required for MVP)
+
+THE ONLY THINGS REQUIRED FOR MVP ARE THE ONES LISTED ABOVE. EVERYTHING ELSE IS ADDITIONAL CONTEXT. SEE rubric.md for more details.
+
 The MVP isn't about features—it's about proving your messaging infrastructure is solid. A simple chat app with reliable message delivery is worth more than a feature-rich app with messages that don't sync reliably.
-Platform Requirements
-Choose ONE of the following:
-* Swift (iOS native) - SwiftUI or UIKit
-* Kotlin (Android native) - Jetpack Compose or XML
-* React Native with Expo - Must use Expo Go or custom dev client
+
+
 Core Messaging Infrastructure
 Essential Features
 Your messaging app needs one-on-one chat with real-time message delivery. Messages must persist locally—users should see their chat history even when offline. Support text messages with timestamps and read receipts.
@@ -41,88 +41,34 @@ Build group chat functionality supporting 3+ users with proper message attributi
 Real-Time Messaging
 Every message should appear instantly for online recipients. When users go offline, messages queue and send when connectivity returns. The app must handle poor network conditions gracefully—3G, packet loss, intermittent connectivity.
 Implement optimistic UI updates. When users send a message, it appears immediately in their chat, then updates with delivery confirmation. Messages never get lost—if the app crashes mid-send, the message should still go out.
-Testing Scenarios
-We'll test with:
-1. Two devices chatting in real-time
-2. One device going offline, receiving messages, then coming back online
-3. Messages sent while app is backgrounded
-4. App force-quit and reopened to verify persistence
-5. Poor network conditions (airplane mode, throttled connection)
-6. Rapid-fire messages (20+ messages sent quickly)
-7. Group chat with 3+ participants
+
 Choose Your User Persona
 You must build for ONE of these specific user types. Your AI features should be tailored to their needs.
 For each persona, you must implement:
 1. All 5 required AI features listed below
 2. ONE advanced AI capability from the options provided
-Persona Comparison
-Persona
-	Who They Are
-	Core Pain Points
-	Required AI Features (All 5)
-	Advanced Features (Only 1)
-	Remote Team Professional
-	Software engineers, designers, PMs in distributed teams.
-	• Drowning in threads 
-• Missing important messages 
-• Context switching 
-• Time zone coordination
-	1. Thread summarization 
-2. Action item extraction 
-3. Smart search 
-4. Priority message detection 
-5. Decision tracking
-	A) Multi-Step Agent: Plans team offsites, coordinates schedules autonomously 
- 
-B) Proactive Assistant: Auto-suggests meeting times, detects scheduling needs
-	International Communicator
-	People with friends/family/colleagues speaking different languages.
-	• Language barriers 
+
+
+PERSONA CHOICE: International Communicator
+
+Core Pain Points:
+• Language barriers 
 • Translation nuances 
 • Copy-paste overhead 
 • Learning difficulty
-	1. Real-time translation (inline) 
+
+
+Required AI Features:
+1. Real-time translation (inline) 
 2. Language detection & auto-translate 
 3. Cultural context hints 
 4. Formality level adjustment 
 5. Slang/idiom explanations
-	A) Context-Aware Smart Replies: Learns your style in multiple languages  
 
-
+Advanced AI Features (Choose 1):
+A) Context-Aware Smart Replies: Learns your style in multiple languages  
 B) Intelligent Processing: Extracts structured data from multilingual conversations
-	Busy Parent/Caregiver
-	Parents coordinating schedules, managing multiple responsibilities.
-	• Schedule juggling 
-• Missing dates/appointments 
-• Decision fatigue 
-• Information overload
-	1. Smart calendar extraction 
-2. Decision summarization 
-3. Priority message highlighting 
-4. RSVP tracking 
-5. Deadline/reminder extraction
-	A) Proactive Assistant: Detects scheduling conflicts, suggests solutions  
 
-
-B) Multi-Step Agent: Plans weekend activities based on family preferences
-	Content Creator/Influencer
-	YouTubers, TikTokers managing fan communication.
-	• Hundreds of DMs daily 
-• Repetitive questions 
-• Spam vs opportunities 
-• Maintaining authentic voice
-	1. Auto-categorization (fan/business/spam/urgent) 
-2. Response drafting in creator's voice 
-3. FAQ auto-responder 
-4. Sentiment analysis 
-5. Collaboration opportunity scoring
-	A) Context-Aware Smart Replies: Generates authentic replies matching personality  
-
-
-B) Multi-Step Agent: Handles daily DMs, auto-responds to FAQs, flags key messages
-	AI Features Implementation
-All AI features should be built using LLMs (like GPT-4 or Claude), function calling/tool use, and RAG pipelines for accessing conversation history. This is not about training ML models—it's about leveraging existing AI capabilities through prompting and tool integration.
-Technical Implementation
 AI Architecture Options:
 Option 1: AI Chat Interface A dedicated AI assistant in a special chat where users can:
 * Ask questions about their conversations
@@ -146,24 +92,12 @@ Your agent should have:
 * Error handling and recovery
 Technical Stack (Recommended)
 The Golden Path: Firebase + Swift
-Backend:
-* Firebase Firestore - real-time database
-* Firebase Cloud Functions - serverless backend for AI calls
-* Firebase Auth - user authentication
-* Firebase Cloud Messaging (FCM) - push notifications
-Alternative Paths
+
 React Native:
 * Expo Router, Expo SQLite, Expo Notifications
 * Deploy via Expo Go
 * Still use Firebase backend
-Android:
-* Kotlin with Jetpack Compose
-* Room Database
-* Firebase SDK
-* Deploy via APK
-Other Backends:
-* AWS (DynamoDB, Lambda, API Gateway, SNS)
-* Supabase (PostgreSQL, Realtime, Auth)
+
 Build Strategy
 Start with Messages First: Get basic messaging working end-to-end before anything else:
 1. Send a text message from User A → appears on User B's device

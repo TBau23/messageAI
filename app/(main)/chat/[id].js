@@ -9,74 +9,222 @@ import {
   Platform,
   Modal
 } from 'react-native';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../store/authStore';
 import { useChatStore } from '../../../store/chatStore';
 import { useNotificationStore } from '../../../store/notificationStore';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebaseConfig';
 import { format } from 'date-fns';
 import NetworkBanner from '../../../components/NetworkBanner';
+import MessageStatusIndicator from '../../../components/MessageStatusIndicator';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const { user } = useAuthStore();
-  const { messages, subscribeToMessages, sendMessage, clearMessages } = useChatStore();
+  const { messages, subscribeToMessages, sendMessage, clearMessages, retryMessage } = useChatStore();
   const { setCurrentChatId } = useNotificationStore();
   const [inputText, setInputText] = useState('');
-  const [sending, setSending] = useState(false);
   const [conversationData, setConversationData] = useState(null);
   const [participantMap, setParticipantMap] = useState({});
+  const [typingUsers, setTypingUsers] = useState({});
   const [showMemberList, setShowMemberList] = useState(false);
+  const [selectedStatusMessage, setSelectedStatusMessage] = useState(null);
   const flatListRef = useRef(null);
+  const participantSubscriptionsRef = useRef({});
+  const typingTimeoutRef = useRef(null);
+  const typingActiveRef = useRef(false);
+  const lastTypingSignalRef = useRef(0);
+  const retryingMessagesRef = useRef(new Set());
+
+  const toDisplayDate = useCallback((value) => {
+    if (!value) return null;
+    if (value.toDate) return value.toDate();
+    if (value instanceof Date) return value;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }, []);
+
+  const formatReceiptTimestamp = useCallback((value) => {
+    const date = toDisplayDate(value);
+    if (!date) return null;
+    return format(date, 'MMM d, h:mm a');
+  }, [toDisplayDate]);
+
+  const cleanupParticipantSubscriptions = useCallback(() => {
+    const currentSubs = participantSubscriptionsRef.current;
+    Object.keys(currentSubs).forEach((uid) => {
+      currentSubs[uid]?.();
+    });
+    participantSubscriptionsRef.current = {};
+  }, []);
+
+  const subscribeToParticipantUpdates = useCallback((participantIds = []) => {
+    const currentSubs = participantSubscriptionsRef.current;
+    const nextIds = new Set(participantIds);
+
+    // Remove old subscriptions
+    Object.keys(currentSubs).forEach((uid) => {
+      if (!nextIds.has(uid)) {
+        currentSubs[uid]?.();
+        delete currentSubs[uid];
+        setParticipantMap(prev => {
+          const updated = { ...prev };
+          delete updated[uid];
+          return updated;
+        });
+      }
+    });
+
+    participantIds.forEach((uid) => {
+      if (!uid || currentSubs[uid]) return;
+
+      const unsubscribe = onSnapshot(
+        doc(db, 'users', uid),
+        (userDoc) => {
+          if (userDoc.exists()) {
+            setParticipantMap(prev => ({
+              ...prev,
+              [uid]: { uid, ...userDoc.data() }
+            }));
+          }
+        },
+        (error) => {
+          console.error('Participant subscription error:', error);
+        }
+      );
+
+      currentSubs[uid] = unsubscribe;
+    });
+  }, []);
+
+  const updateTypingStatus = useCallback((typing) => {
+    if (!id || !user?.uid) return;
+
+    setDoc(
+      doc(db, `conversations/${id}/typingStatus/${user.uid}`),
+      {
+        typing,
+        updatedAt: serverTimestamp()
+      },
+      { merge: true }
+    ).catch((error) => {
+      console.error('Error updating typing status:', error);
+    });
+  }, [id, user?.uid]);
+
+  const isTypingEntryActive = useCallback((entry) => {
+    if (!entry?.typing) return false;
+
+    const updatedAt = entry.updatedAt;
+    let updatedMs = 0;
+
+    if (updatedAt?.toMillis) {
+      updatedMs = updatedAt.toMillis();
+    } else if (updatedAt instanceof Date) {
+      updatedMs = updatedAt.getTime();
+    } else if (typeof updatedAt === 'number') {
+      updatedMs = updatedAt;
+    } else {
+      return false;
+    }
+
+    return Date.now() - updatedMs < 5000;
+  }, []);
+
+  const handleTextChange = (text) => {
+    setInputText(text);
+
+    if (!id || !user?.uid) return;
+
+    const now = Date.now();
+
+    if (!typingActiveRef.current || now - lastTypingSignalRef.current > 2000) {
+      typingActiveRef.current = true;
+      lastTypingSignalRef.current = now;
+      updateTypingStatus(true);
+    }
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      typingActiveRef.current = false;
+      updateTypingStatus(false);
+    }, 2000);
+  };
 
   useEffect(() => {
-    if (id && user) {
-      // Set current chat to prevent notifications from this conversation
-      setCurrentChatId(id);
+    if (!id || !user?.uid) return;
 
-      // Fetch conversation info
-      const fetchConversation = async () => {
-        const convoDoc = await getDoc(doc(db, 'conversations', id));
-        if (convoDoc.exists()) {
-          const convoData = convoDoc.data();
-          setConversationData({ id, ...convoData });
+    setCurrentChatId(id);
 
-          // Fetch all participant details for groups
-          if (convoData.type === 'group') {
-            const participantsData = {};
-            await Promise.all(
-              convoData.participants.map(async (uid) => {
-                const userDoc = await getDoc(doc(db, 'users', uid));
-                if (userDoc.exists()) {
-                  participantsData[uid] = userDoc.data();
-                }
-              })
-            );
-            setParticipantMap(participantsData);
-          } else {
-            // For direct chats, just get the other user
-            const otherUserId = convoData.participants.find(uid => uid !== user.uid);
-            const userDoc = await getDoc(doc(db, 'users', otherUserId));
-            if (userDoc.exists()) {
-              setParticipantMap({ [otherUserId]: userDoc.data() });
-            }
-          }
+    const unsubscribeMessages = subscribeToMessages(id, user.uid);
+
+    const conversationUnsubscribe = onSnapshot(
+      doc(db, 'conversations', id),
+      (convoDoc) => {
+        if (!convoDoc.exists()) {
+          setConversationData(null);
+          setParticipantMap({});
+          return;
         }
-      };
 
-      fetchConversation();
-      const unsubscribe = subscribeToMessages(id);
-      return () => {
-        unsubscribe();
-        clearMessages();
-        setCurrentChatId(null); // Clear current chat when leaving
-      };
-    }
-  }, [id, user]);
+        const convoData = { id, ...convoDoc.data() };
+        setConversationData(convoData);
+        subscribeToParticipantUpdates(convoData.participants || []);
+      },
+      (error) => {
+        console.error('Conversation subscription error:', error);
+      }
+    );
+
+    const typingUnsubscribe = onSnapshot(
+      collection(db, `conversations/${id}/typingStatus`),
+      (snapshot) => {
+        const typingMap = {};
+        snapshot.forEach((docSnap) => {
+          typingMap[docSnap.id] = docSnap.data();
+        });
+        setTypingUsers(typingMap);
+      },
+      (error) => {
+        console.error('Typing subscription error:', error);
+      }
+    );
+
+    return () => {
+      unsubscribeMessages();
+      conversationUnsubscribe();
+      typingUnsubscribe();
+      clearMessages();
+      cleanupParticipantSubscriptions();
+      setParticipantMap({});
+      setTypingUsers({});
+      setCurrentChatId(null);
+      setSelectedStatusMessage(null);
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      updateTypingStatus(false);
+      typingActiveRef.current = false;
+      lastTypingSignalRef.current = 0;
+      retryingMessagesRef.current.clear();
+    };
+  }, [
+    id,
+    user,
+    subscribeToMessages,
+    clearMessages,
+    setCurrentChatId,
+    subscribeToParticipantUpdates,
+    cleanupParticipantSubscriptions,
+    updateTypingStatus
+  ]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -103,19 +251,40 @@ export default function ChatScreen() {
   }, [id, messages, user]);
 
   const handleSend = async () => {
-    if (!inputText.trim() || sending) return;
+    if (!inputText.trim()) return;
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    if (typingActiveRef.current) {
+      typingActiveRef.current = false;
+    }
+    updateTypingStatus(false);
+    lastTypingSignalRef.current = 0;
 
     const messageText = inputText.trim();
     setInputText('');
-    setSending(true);
 
     const result = await sendMessage(id, user.uid, messageText);
-    setSending(false);
 
     if (!result.success) {
       // Show error (you could add a toast notification here)
       console.error('Failed to send message:', result.error);
     }
+  };
+
+  const handleRetry = async (message) => {
+    if (!message?.localId) return;
+    if (retryingMessagesRef.current.has(message.localId)) return;
+
+    retryingMessagesRef.current.add(message.localId);
+    const result = await retryMessage(id, user.uid, message);
+
+    if (!result.success) {
+      console.error('Retry failed:', result.error);
+    }
+
+    retryingMessagesRef.current.delete(message.localId);
   };
 
   const renderMessage = ({ item }) => {
@@ -130,48 +299,30 @@ export default function ChatScreen() {
     const senderName = participantMap[item.senderId]?.displayName || 'Unknown';
     const isGroup = conversationData?.type === 'group';
 
-    // Calculate read receipt status
-    const getReceiptStatus = () => {
-      if (!isMyMessage) return null;
-      if (item.status === 'sending') return { icon: '🕐', color: '#999' };
-      
-      const participants = conversationData?.participants || [];
-      const otherParticipants = participants.filter(p => p !== user.uid);
-      const readBy = item.readBy || [];
-      const deliveredTo = item.deliveredTo || [];
-      
-      // Check if all other participants have read it
-      const allRead = otherParticipants.every(p => readBy.includes(p));
-      // Check if all other participants have received it
-      const allDelivered = otherParticipants.every(p => deliveredTo.includes(p));
-      
-      if (allRead) {
-        return { icon: '✓✓', color: '#4fc3f7' }; // Blue double check
-      } else if (allDelivered) {
-        return { icon: '✓✓', color: '#999' }; // Grey double check
-      } else {
-        return { icon: '✓', color: '#999' }; // Grey single check (sent)
-      }
-    };
-
-    const receiptStatus = getReceiptStatus();
+    const isFailed = item.status === 'failed';
 
     return (
-      <View style={[
-        styles.messageContainer,
-        isMyMessage ? styles.myMessageContainer : styles.otherMessageContainer
-      ]}>
-        <View style={[
-          styles.messageBubble,
-          isMyMessage ? styles.myMessageBubble : styles.otherMessageBubble
-        ]}>
+      <View
+        style={[
+          styles.messageContainer,
+          isMyMessage ? styles.myMessageContainer : styles.otherMessageContainer
+        ]}
+      >
+        <View
+          style={[
+            styles.messageBubble,
+            isMyMessage ? styles.myMessageBubble : styles.otherMessageBubble,
+            isMyMessage && isFailed && styles.failedMessageBubble
+          ]}
+        >
           {/* Show sender name in group chats for other users' messages */}
           {isGroup && !isMyMessage && (
             <Text style={styles.senderName}>{senderName}</Text>
           )}
           <Text style={[
             styles.messageText,
-            isMyMessage ? styles.myMessageText : styles.otherMessageText
+            isMyMessage ? styles.myMessageText : styles.otherMessageText,
+            isMyMessage && isFailed && styles.failedMessageText
           ]}>
             {item.text}
           </Text>
@@ -182,16 +333,81 @@ export default function ChatScreen() {
             ]}>
               {timeString}
             </Text>
-            {receiptStatus && (
-              <Text style={[styles.messageStatus, { color: receiptStatus.color }]}>
-                {receiptStatus.icon}
-              </Text>
-            )}
           </View>
+          {isMyMessage && isFailed && (
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={() => handleRetry(item)}
+            >
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          )}
         </View>
+        {isMyMessage && !isFailed && (
+          <MessageStatusIndicator
+            message={item}
+            isOwnMessage={isMyMessage}
+            conversationType={conversationData?.type}
+            participantMap={participantMap}
+            currentUserId={user.uid}
+            onPressDetails={
+              conversationData?.type === 'group'
+                ? () => setSelectedStatusMessage(item)
+                : undefined
+            }
+          />
+        )}
       </View>
     );
   };
+
+  const participantIds = conversationData?.participants || [];
+  const otherUserId = conversationData?.type === 'group'
+    ? participantIds.find(uid => uid !== user?.uid && participantMap[uid])
+    : participantIds.find(uid => uid !== user?.uid);
+  const otherUserData = otherUserId ? participantMap[otherUserId] : null;
+  const otherIsTyping = otherUserId ? isTypingEntryActive(typingUsers[otherUserId]) : false;
+
+  let directStatusText = 'Loading...';
+  const directStatusStyles = [styles.onlineStatus];
+  if (otherIsTyping) {
+    directStatusText = 'Typing...';
+    directStatusStyles.push(styles.typingStatus);
+  } else if (typeof otherUserData?.online === 'boolean') {
+    directStatusText = otherUserData.online ? 'Online' : 'Offline';
+    if (!otherUserData.online) {
+      directStatusStyles.push(styles.offlineStatus);
+    }
+  }
+  const otherDisplayName = otherUserData?.displayName || 'Loading...';
+
+  const groupParticipants = conversationData?.type === 'group' ? participantIds : [];
+  const typingMemberIds = groupParticipants.filter(
+    uid => uid !== user?.uid && isTypingEntryActive(typingUsers[uid])
+  );
+  const groupStatusStyles = [styles.onlineStatus];
+  let groupStatusText = 'Tap for members';
+
+  if (conversationData?.type === 'group') {
+    if (typingMemberIds.length > 0) {
+      const typingNames = typingMemberIds
+        .map(uid => participantMap[uid]?.displayName || 'Someone');
+      const displayNames = typingNames.slice(0, 2).join(', ');
+      const extraCount = typingNames.length - 2;
+      const suffix = typingNames.length > 1 ? ' are typing...' : ' is typing...';
+      groupStatusText = `${displayNames}${extraCount > 0 ? ` +${extraCount}` : ''}${suffix}`;
+      groupStatusStyles.push(styles.typingStatus);
+    } else {
+      const totalCount = groupParticipants.length;
+      const onlineCount = groupParticipants.filter(uid => participantMap[uid]?.online).length;
+      groupStatusText = totalCount > 0
+        ? `${onlineCount}/${totalCount} online • Tap for members`
+        : 'Tap for members';
+      if (onlineCount === 0) {
+        groupStatusStyles.push(styles.offlineStatus);
+      }
+    }
+  }
 
   // Show loading if user isn't loaded yet
   if (!user) {
@@ -220,26 +436,17 @@ export default function ChatScreen() {
             <Text style={styles.headerName}>
               {conversationData?.type === 'group' 
                 ? conversationData.name || 'Group Chat'
-                : participantMap[Object.keys(participantMap)[0]]?.displayName || 'Loading...'}
+                : otherDisplayName}
             </Text>
             {conversationData?.type === 'group' ? (
               <TouchableOpacity onPress={() => setShowMemberList(true)}>
-                <Text style={styles.onlineStatus}>
-                  {(() => {
-                    const onlineCount = Object.values(participantMap).filter(p => p.online).length;
-                    const totalCount = conversationData.participants?.length || 0;
-                    return onlineCount > 0 
-                      ? `${onlineCount}/${totalCount} online • Tap for members`
-                      : `${totalCount} participants • Tap for members`;
-                  })()}
+                <Text style={groupStatusStyles}>
+                  {groupStatusText}
                 </Text>
               </TouchableOpacity>
             ) : (
-              <Text style={[
-                styles.onlineStatus,
-                !participantMap[Object.keys(participantMap)[0]]?.online && styles.offlineStatus
-              ]}>
-                {participantMap[Object.keys(participantMap)[0]]?.online ? 'Online' : 'Offline'}
+              <Text style={directStatusStyles}>
+                {directStatusText}
               </Text>
             )}
           </View>
@@ -261,15 +468,15 @@ export default function ChatScreen() {
         <TextInput
           style={styles.input}
           value={inputText}
-          onChangeText={setInputText}
+          onChangeText={handleTextChange}
           placeholder="Type a message..."
           multiline
           maxLength={1000}
         />
         <TouchableOpacity
-          style={[styles.sendButton, (!inputText.trim() || sending) && styles.sendButtonDisabled]}
+          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
           onPress={handleSend}
-          disabled={!inputText.trim() || sending}
+          disabled={!inputText.trim()}
         >
           <Text style={styles.sendButtonText}>Send</Text>
         </TouchableOpacity>
@@ -323,6 +530,68 @@ export default function ChatScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Delivery / Read Detail Modal */}
+      <Modal
+        visible={!!selectedStatusMessage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedStatusMessage(null)}
+      >
+        <View style={styles.statusModalOverlay}>
+          <View style={styles.statusModalContent}>
+            <View style={styles.statusModalHeader}>
+              <Text style={styles.statusModalTitle}>Message Status</Text>
+              <TouchableOpacity onPress={() => setSelectedStatusMessage(null)}>
+                <Text style={styles.statusModalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {selectedStatusMessage && (
+              <View style={styles.statusModalBody}>
+                <Text style={styles.statusModalMessageText}>
+                  {selectedStatusMessage.text}
+                </Text>
+                <Text style={styles.statusModalTimestamp}>
+                  Sent {formatReceiptTimestamp(selectedStatusMessage.timestamp) || 'Pending'}
+                </Text>
+
+                <View style={styles.statusModalListHeader}>
+                  <Text style={[styles.statusModalListHeaderText, styles.statusModalListHeaderParticipant]}>
+                    Participant
+                  </Text>
+                  <Text style={[styles.statusModalListHeaderText, styles.statusModalListHeaderRead]}>
+                    Read Status
+                  </Text>
+                </View>
+
+                {(conversationData?.participants || [])
+                  .filter(uid => uid !== user?.uid)
+                  .map(uid => {
+                    const userData = participantMap[uid] || {};
+                    const readBy = selectedStatusMessage.readBy || [];
+                    const readAt = formatReceiptTimestamp(
+                      selectedStatusMessage.readReceipts?.[uid]
+                    );
+
+                    const readLabel = readBy.includes(uid)
+                      ? readAt ? `Read at ${readAt}` : 'Read'
+                      : 'Not read';
+
+                    return (
+                      <View key={uid} style={styles.statusModalRow}>
+                        <Text style={[styles.statusModalParticipant, styles.statusModalParticipantCell]}>
+                          {userData.displayName || 'Unknown'}
+                        </Text>
+                        <Text style={styles.statusModalRead}>{readLabel}</Text>
+                      </View>
+                    );
+                  })}
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -368,6 +637,9 @@ const styles = StyleSheet.create({
   offlineStatus: {
     color: '#999',
   },
+  typingStatus: {
+    color: '#c8e6ff',
+  },
   messagesList: {
     padding: 15,
   },
@@ -391,6 +663,11 @@ const styles = StyleSheet.create({
   otherMessageBubble: {
     backgroundColor: '#fff',
   },
+  failedMessageBubble: {
+    backgroundColor: '#fdecea',
+    borderWidth: 1,
+    borderColor: '#f44336',
+  },
   senderName: {
     fontSize: 12,
     fontWeight: 'bold',
@@ -405,6 +682,9 @@ const styles = StyleSheet.create({
   },
   otherMessageText: {
     color: '#000',
+  },
+  failedMessageText: {
+    color: '#b71c1c',
   },
   messageFooter: {
     flexDirection: 'row',
@@ -425,6 +705,9 @@ const styles = StyleSheet.create({
   messageStatus: {
     fontSize: 12,
     color: '#666',
+  },
+  failedMessageStatus: {
+    fontWeight: 'bold',
   },
   inputContainer: {
     flexDirection: 'row',
@@ -457,6 +740,19 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 14,
+  },
+  retryButton: {
+    alignSelf: 'flex-end',
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#f8b5b1',
+  },
+  retryButtonText: {
+    color: '#8b0000',
+    fontSize: 12,
+    fontWeight: '600',
   },
   modalOverlay: {
     flex: 1,
@@ -541,5 +837,91 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
   },
+  statusModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  statusModalContent: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingBottom: 20,
+  },
+  statusModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  statusModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#075E54',
+  },
+  statusModalClose: {
+    fontSize: 22,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  statusModalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+  },
+  statusModalMessageText: {
+    fontSize: 16,
+    color: '#333',
+    marginBottom: 4,
+  },
+  statusModalTimestamp: {
+    fontSize: 12,
+    color: '#777',
+    marginBottom: 16,
+  },
+  statusModalListHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  statusModalListHeaderText: {
+    color: '#607D8B',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  statusModalListHeaderParticipant: {
+    flex: 1.4,
+  },
+  statusModalListHeaderRead: {
+    flex: 1,
+    textAlign: 'right',
+  },
+  statusModalRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f4f4f4',
+  },
+  statusModalParticipant: {
+    color: '#37474F',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  statusModalParticipantCell: {
+    flex: 1.4,
+  },
+  statusModalRead: {
+    flex: 1,
+    color: '#2E7D32',
+    fontSize: 12,
+    textAlign: 'right',
+  },
 });
-

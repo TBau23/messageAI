@@ -17,6 +17,40 @@ import {
 import { db } from '../firebaseConfig';
 import { useNotificationStore } from './notificationStore';
 
+const tempId = () => `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const toMillis = (value) => {
+  if (!value) return null;
+  if (typeof value === 'number') return value;
+  if (value?.toMillis) return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+};
+
+const getOrderTimestamp = (message = {}, metric = {}) => {
+  if (typeof message.orderTimestamp === 'number') {
+    return message.orderTimestamp;
+  }
+
+  const timestampCandidates = [
+    message.timestamp,
+    message.clientSentAt,
+    message.sentAt,
+    message.createdAt,
+    metric?.sentAt
+  ];
+
+  for (const candidate of timestampCandidates) {
+    const millis = toMillis(candidate);
+    if (millis) {
+      return millis;
+    }
+  }
+
+  return Date.now();
+};
+
 export const useChatStore = create((set, get) => ({
   conversations: [],
   currentConversation: null,
@@ -25,6 +59,8 @@ export const useChatStore = create((set, get) => ({
   error: null,
   previousConversations: {}, // Track previous state for notifications
   isInitialLoad: true, // Track if this is the first load
+  pendingMessages: {}, // conversationId -> pending/failed optimistic messages
+  messageMetrics: {}, // localId -> { conversationId, sentAt, deliveryLatencyMs?, failed? }
 
   // Subscribe to user's conversations
   subscribeToConversations: (userId) => {
@@ -136,18 +172,114 @@ export const useChatStore = create((set, get) => ({
   },
 
   // Subscribe to messages in a conversation
-  subscribeToMessages: (conversationId) => {
+  subscribeToMessages: (conversationId, userId) => {
     const q = query(
       collection(db, `conversations/${conversationId}/messages`),
       orderBy('timestamp', 'asc')
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      set({ messages: msgs });
+    set({ currentConversation: conversationId });
+
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const docs = snapshot.docs.map(docSnap => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          ...data
+        };
+      });
+
+      // Mark messages as delivered for the current user
+      const deliveryUpdates = [];
+      docs.forEach(message => {
+        if (message.senderId !== userId) {
+          const deliveredTo = message.deliveredTo || [];
+          if (!deliveredTo.includes(userId)) {
+            const docRef = doc(db, `conversations/${conversationId}/messages/${message.id}`);
+            deliveryUpdates.push(
+              updateDoc(docRef, {
+                deliveredTo: arrayUnion(userId),
+                [`deliveredReceipts.${userId}`]: serverTimestamp()
+              })
+            );
+          }
+        }
+      });
+
+      if (deliveryUpdates.length > 0) {
+        Promise.allSettled(deliveryUpdates).catch((error) => {
+          console.error('Error updating delivery status:', error);
+        });
+      }
+
+      const state = get();
+      const pendingForConversation = state.pendingMessages[conversationId] || [];
+      const metrics = { ...state.messageMetrics };
+      const persistedLocalIds = new Set(
+        docs
+          .map(msg => msg.localId)
+          .filter(Boolean)
+      );
+
+      docs.forEach((message) => {
+        const localId = message.localId;
+        if (!localId) return;
+        const metric = metrics[localId];
+        if (metric?.sentAt && !metric.deliveryLatencyMs) {
+          const latency = Date.now() - metric.sentAt;
+          metrics[localId] = {
+            ...metric,
+            deliveryLatencyMs: latency
+          };
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.log(`Message ${message.id} delivered in ${latency}ms`);
+          }
+        }
+      });
+
+      const filteredPending = pendingForConversation.filter(
+        msg => !persistedLocalIds.has(msg.localId)
+      );
+
+      const processedDocs = docs.map((message) => {
+        const localId = message.localId;
+        const metric = localId ? metrics[localId] : undefined;
+        const orderTimestamp = getOrderTimestamp(message, metric);
+        const millis = toMillis(message.timestamp);
+        const shouldFallbackTimestamp = !millis || millis <= 0;
+
+        return {
+          ...message,
+          timestamp: shouldFallbackTimestamp
+            ? new Date(orderTimestamp)
+            : message.timestamp,
+          orderTimestamp,
+          deliveryLatencyMs: metric?.deliveryLatencyMs ?? message.deliveryLatencyMs
+        };
+      });
+
+      const processedPending = filteredPending.map((message) => {
+        const localId = message.localId;
+        const metric = localId ? metrics[localId] : undefined;
+        const orderTimestamp = getOrderTimestamp(message, metric);
+        return {
+          ...message,
+          orderTimestamp
+        };
+      });
+
+      const combinedMessages = [...processedDocs, ...processedPending].sort(
+        (a, b) => (a.orderTimestamp || 0) - (b.orderTimestamp || 0)
+      );
+
+      set({
+        messages: combinedMessages,
+        pendingMessages: {
+          ...state.pendingMessages,
+          [conversationId]: filteredPending
+        },
+        messageMetrics: metrics
+      });
     });
 
     return unsubscribe;
@@ -232,20 +364,40 @@ export const useChatStore = create((set, get) => ({
 
   // Send a message
   sendMessage: async (conversationId, senderId, text) => {
-    try {
-      // Add optimistic message
-      const tempId = `temp_${Date.now()}`;
-      const optimisticMessage = {
-        id: tempId,
-        text,
-        senderId,
-        timestamp: new Date(),
-        status: 'sending',
-        localId: tempId
-      };
+    const localId = tempId();
 
+    const sentAt = Date.now();
+
+    // Prepare optimistic message up front so we can reference it in catch blocks
+    const optimisticMessage = {
+      id: localId,
+      localId,
+      text,
+      senderId,
+      timestamp: new Date(),
+      status: 'sending',
+      conversationId,
+      clientSentAt: sentAt,
+      orderTimestamp: sentAt
+    };
+
+    try {
       set((state) => ({
-        messages: [...state.messages, optimisticMessage]
+        messages: [...state.messages, optimisticMessage],
+        pendingMessages: {
+          ...state.pendingMessages,
+          [conversationId]: [
+            ...(state.pendingMessages[conversationId] || []),
+            optimisticMessage
+          ]
+        },
+        messageMetrics: {
+          ...state.messageMetrics,
+          [localId]: {
+            conversationId,
+            sentAt
+          }
+        }
       }));
 
       // Send to Firestore
@@ -257,53 +409,115 @@ export const useChatStore = create((set, get) => ({
           timestamp: serverTimestamp(),
           deliveredTo: [senderId],
           readBy: [senderId],
-          status: 'sent'
+          status: 'sent',
+          localId,
+          clientSentAt: sentAt,
+          deliveredReceipts: {
+            [senderId]: serverTimestamp()
+          },
+          readReceipts: {
+            [senderId]: serverTimestamp()
+          }
         }
       );
 
-      // Update conversation's last message
-      await updateDoc(doc(db, 'conversations', conversationId), {
+      // Update conversation's last message (fire and forget to avoid blocking UI)
+      updateDoc(doc(db, 'conversations', conversationId), {
         lastMessage: {
           text,
           senderId,
           timestamp: serverTimestamp()
         },
         updatedAt: serverTimestamp()
+      }).catch((err) => {
+        console.error('Error updating conversation metadata:', err);
       });
-
-      // Remove optimistic message (real one will come from listener)
-      set((state) => ({
-        messages: state.messages.filter(msg => msg.id !== tempId)
-      }));
 
       return { success: true, messageId: messageRef.id };
     } catch (error) {
       console.error('Error sending message:', error);
-      
-      // Update optimistic message to show error
-      set((state) => ({
-        messages: state.messages.map(msg =>
-          msg.id === `temp_${Date.now()}` 
-            ? { ...msg, status: 'error' }
+
+      set((state) => {
+        const pendingForConversation = state.pendingMessages[conversationId] || [];
+        const updatedPending = pendingForConversation.map(msg =>
+          msg.localId === optimisticMessage.localId
+            ? { ...msg, status: 'failed' }
             : msg
-        )
-      }));
+        );
+
+        const updatedMessages = state.messages.map(msg =>
+          msg.localId === optimisticMessage.localId
+            ? { ...msg, status: 'failed' }
+            : msg
+        );
+
+        const updatedMetrics = { ...state.messageMetrics };
+        if (updatedMetrics[optimisticMessage.localId]) {
+          updatedMetrics[optimisticMessage.localId] = {
+            ...updatedMetrics[optimisticMessage.localId],
+            failed: true
+          };
+        }
+
+        return {
+          messages: updatedMessages,
+          pendingMessages: {
+            ...state.pendingMessages,
+            [conversationId]: updatedPending
+          },
+          messageMetrics: updatedMetrics
+        };
+      });
 
       return { success: false, error: error.message };
     }
   },
 
+  // Retry a failed message
+  retryMessage: async (conversationId, senderId, message) => {
+    // Remove existing failed instance before retrying
+    set((state) => {
+      const pendingForConversation = state.pendingMessages[conversationId] || [];
+      const updatedMetrics = { ...state.messageMetrics };
+      delete updatedMetrics[message.localId];
+      return {
+        messages: state.messages.filter(msg => msg.localId !== message.localId),
+        pendingMessages: {
+          ...state.pendingMessages,
+          [conversationId]: pendingForConversation.filter(
+            msg => msg.localId !== message.localId
+          )
+        },
+        messageMetrics: updatedMetrics
+      };
+    });
+
+    return await get().sendMessage(conversationId, senderId, message.text);
+  },
+
   // Mark messages as read
   markMessagesAsRead: async (conversationId, messageIds, userId) => {
     try {
-      const promises = messageIds.map(messageId =>
-        updateDoc(
-          doc(db, `conversations/${conversationId}/messages/${messageId}`),
-          {
-            readBy: arrayUnion(userId)
-          }
-        )
+      const validMessageIds = (messageIds || []).filter(
+        (messageId) => messageId && !messageId.startsWith('temp_')
       );
+
+      if (validMessageIds.length === 0) {
+        return;
+      }
+
+      const promises = validMessageIds.map((messageId) => {
+        const messageRef = doc(db, `conversations/${conversationId}/messages/${messageId}`);
+        return updateDoc(messageRef, {
+          readBy: arrayUnion(userId),
+          [`readReceipts.${userId}`]: serverTimestamp()
+        }).catch((error) => {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('Skipping read receipt update:', error.message);
+          }
+        });
+      });
+
       await Promise.all(promises);
     } catch (error) {
       console.error('Error marking messages as read:', error);
@@ -312,7 +526,32 @@ export const useChatStore = create((set, get) => ({
 
   // Clear messages when leaving chat
   clearMessages: () => {
-    set({ messages: [], currentConversation: null });
+    set((state) => {
+      const activeConversation = state.currentConversation;
+
+      if (!activeConversation) {
+        return { messages: [], currentConversation: null };
+      }
+
+      const filteredMetricsEntries = Object.entries(state.messageMetrics || {}).filter(
+        ([, meta]) => meta.conversationId !== activeConversation
+      );
+
+      const filteredMetrics = filteredMetricsEntries.reduce((acc, [key, value]) => {
+        acc[key] = value;
+        return acc;
+      }, {});
+
+      const filteredPending = { ...(state.pendingMessages || {}) };
+      delete filteredPending[activeConversation];
+
+      return {
+        messages: [],
+        currentConversation: null,
+        messageMetrics: filteredMetrics,
+        pendingMessages: filteredPending
+      };
+    });
   },
 
   // Search for users
@@ -338,4 +577,3 @@ export const useChatStore = create((set, get) => ({
     }
   }
 }));
-

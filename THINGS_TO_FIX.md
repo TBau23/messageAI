@@ -1,0 +1,3 @@
+--offline status is ugly
+-- auth errors should have better ux
+-- can we improve speed of offline messages coming through on reconnect?

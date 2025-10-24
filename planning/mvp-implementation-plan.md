@@ -476,40 +476,9 @@ This is the recommended build sequence to minimize risk:
    - Fix edge cases
    - Write documentation
 
-## Out of Scope for MVP
-
-These features are explicitly NOT required and should be deferred:
-
-- ❌ Image/video/audio messages
-- ❌ Voice/video calls
-- ❌ Message editing
-- ❌ Message deletion
-- ❌ Forward messages
-- ❌ Search messages
-- ❌ Profile picture upload
-- ❌ User search/discovery
-- ❌ Contact syncing
-- ❌ Message encryption (E2E)
-- ❌ Reactions/emojis on messages
-- ❌ Message replies/threading
-- ❌ File attachments
-- ❌ Location sharing
-- ❌ Background push notifications (nice-to-have)
-- ❌ TestFlight/Play Store deployment (nice-to-have)
 
 
-## Success Criteria
 
-MVP is complete when:
-- ✅ All 12 explicit requirements are working
-- ✅ 2+ simulators can chat in real-time
-- ✅ Messages persist after app restart
-- ✅ Offline messages sync when reconnected
-- ✅ Group chat works with 3+ users
-- ✅ Read receipts work in both 1-on-1 and groups
-- ✅ Foreground notifications work
-- ✅ README allows anyone to clone and run locally
-- ✅ All test scenarios pass
 
 
 
