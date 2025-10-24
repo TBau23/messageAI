@@ -6,7 +6,8 @@ import {
   TextInput, 
   TouchableOpacity, 
   KeyboardAvoidingView,
-  Platform
+  Platform,
+  Modal
 } from 'react-native';
 import { useEffect, useState, useRef } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -29,10 +30,11 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [conversationData, setConversationData] = useState(null);
   const [participantMap, setParticipantMap] = useState({});
+  const [showMemberList, setShowMemberList] = useState(false);
   const flatListRef = useRef(null);
 
   useEffect(() => {
-    if (id) {
+    if (id && user) {
       // Set current chat to prevent notifications from this conversation
       setCurrentChatId(id);
 
@@ -74,7 +76,7 @@ export default function ChatScreen() {
         setCurrentChatId(null); // Clear current chat when leaving
       };
     }
-  }, [id]);
+  }, [id, user]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -117,6 +119,8 @@ export default function ChatScreen() {
   };
 
   const renderMessage = ({ item }) => {
+    if (!user) return null; // Guard against null user
+    
     const isMyMessage = item.senderId === user.uid;
     const timestamp = item.timestamp?.toDate?.() || item.timestamp;
     const timeString = timestamp 
@@ -189,6 +193,17 @@ export default function ChatScreen() {
     );
   };
 
+  // Show loading if user isn't loaded yet
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.safeArea} edges={['top']}>
+        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+          <Text style={{ color: '#666' }}>Loading...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <KeyboardAvoidingView 
@@ -208,13 +223,24 @@ export default function ChatScreen() {
                 : participantMap[Object.keys(participantMap)[0]]?.displayName || 'Loading...'}
             </Text>
             {conversationData?.type === 'group' ? (
-              <Text style={styles.onlineStatus}>
-                {conversationData.participants?.length || 0} participants
-              </Text>
+              <TouchableOpacity onPress={() => setShowMemberList(true)}>
+                <Text style={styles.onlineStatus}>
+                  {(() => {
+                    const onlineCount = Object.values(participantMap).filter(p => p.online).length;
+                    const totalCount = conversationData.participants?.length || 0;
+                    return onlineCount > 0 
+                      ? `${onlineCount}/${totalCount} online • Tap for members`
+                      : `${totalCount} participants • Tap for members`;
+                  })()}
+                </Text>
+              </TouchableOpacity>
             ) : (
-              participantMap[Object.keys(participantMap)[0]]?.online && (
-                <Text style={styles.onlineStatus}>Online</Text>
-              )
+              <Text style={[
+                styles.onlineStatus,
+                !participantMap[Object.keys(participantMap)[0]]?.online && styles.offlineStatus
+              ]}>
+                {participantMap[Object.keys(participantMap)[0]]?.online ? 'Online' : 'Offline'}
+              </Text>
             )}
           </View>
         </View>
@@ -248,6 +274,55 @@ export default function ChatScreen() {
           <Text style={styles.sendButtonText}>Send</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Member List Modal for Groups */}
+      <Modal
+        visible={showMemberList}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowMemberList(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Group Members</Text>
+              <TouchableOpacity onPress={() => setShowMemberList(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <FlatList
+              data={Object.entries(participantMap)}
+              keyExtractor={([uid]) => uid}
+              renderItem={({ item: [uid, userData] }) => (
+                <View style={styles.memberItem}>
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText}>
+                      {userData.displayName?.[0]?.toUpperCase() || '?'}
+                    </Text>
+                  </View>
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName}>
+                      {userData.displayName || 'Unknown'}
+                      {uid === user.uid && ' (You)'}
+                    </Text>
+                    <View style={styles.memberStatusContainer}>
+                      <View style={[
+                        styles.statusDot,
+                        userData.online ? styles.statusDotOnline : styles.statusDotOffline
+                      ]} />
+                      <Text style={styles.memberStatus}>
+                        {userData.online ? 'Online' : 'Offline'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              )}
+              style={styles.memberList}
+            />
+          </View>
+        </View>
+      </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -289,6 +364,9 @@ const styles = StyleSheet.create({
     color: '#ccc',
     fontSize: 12,
     marginTop: 2,
+  },
+  offlineStatus: {
+    color: '#999',
   },
   messagesList: {
     padding: 15,
@@ -379,6 +457,89 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 14,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#075E54',
+  },
+  modalClose: {
+    fontSize: 24,
+    color: '#666',
+    fontWeight: 'bold',
+  },
+  memberList: {
+    paddingHorizontal: 20,
+  },
+  memberItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  memberAvatar: {
+    width: 45,
+    height: 45,
+    borderRadius: 22.5,
+    backgroundColor: '#075E54',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  memberAvatarText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  memberInfo: {
+    flex: 1,
+  },
+  memberName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 4,
+  },
+  memberStatusContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  statusDotOnline: {
+    backgroundColor: '#4caf50',
+  },
+  statusDotOffline: {
+    backgroundColor: '#999',
+  },
+  memberStatus: {
+    fontSize: 13,
+    color: '#666',
   },
 });
 

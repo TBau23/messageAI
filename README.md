@@ -211,7 +211,6 @@ react-messageai/
 └── package.json
 ```
 
-## 🔥 Firestore Data Schema
 
 ### Users Collection
 
@@ -248,7 +247,6 @@ conversations/{conversationId}
     - status: 'sending' | 'sent' | 'delivered' | 'read'
 ```
 
-## 🧪 Testing Checklist
 
 ### Real-Time Messaging
 - [ ] User A sends message → appears on User B immediately
@@ -301,41 +299,6 @@ conversations/{conversationId}
 - **UI Libraries**: React Native Safe Area Context
 - **Utilities**: date-fns, @react-native-community/netinfo
 
-## 🐛 Troubleshooting
-
-### Firebase Connection Issues
-
-**Problem**: "Firebase: Error (auth/invalid-api-key)"
-- **Solution**: Check that your `.env` file has correct Firebase credentials
-- Ensure you're using `EXPO_PUBLIC_` prefix for environment variables
-
-### Firestore Query Errors
-
-**Problem**: "The query requires an index"
-- **Solution**: Click the link in the error message to create the required index
-- Or manually create composite index: `participants` (Array) + `updatedAt` (Descending)
-
-### Simulator Not Showing Up
-
-**Problem**: Expo can't find iOS simulator
-- **Solution**: 
-  ```bash
-  # Make sure Xcode command line tools are installed
-  xcode-select --install
-  
-  # Open Simulator app manually
-  open -a Simulator
-  ```
-
-### Messages Not Syncing
-
-**Problem**: Messages sent but not appearing on other devices
-- **Solution**:
-  - Check Firestore security rules are properly configured
-  - Verify both users are authenticated
-  - Check browser console for Firestore errors
-  - Ensure the required Firestore index is created
-
 ### Metro Bundler Errors
 
 **Problem**: "Unable to resolve module"
@@ -348,54 +311,4 @@ conversations/{conversationId}
   npx expo start --clear
   ```
 
-## 📦 Dependencies
-
-Key packages and versions:
-
-```json
-{
-  "expo": "54.0.17",
-  "react": "19.1.0",
-  "react-native": "0.81.4",
-  "expo-router": "^6.0.13",
-  "firebase": "^12.4.0",
-  "zustand": "^5.0.8",
-  "@react-native-async-storage/async-storage": "2.2.0",
-  "@react-native-community/netinfo": "^11.4.1",
-  "date-fns": "^4.1.0"
-}
-```
-
-## 🎨 Features Breakdown
-
-### Optimistic UI Updates
-Messages appear instantly when sent, then update with server confirmation. This provides a snappy, WhatsApp-like experience.
-
-### Firestore Offline Persistence
-Uses Firestore's built-in offline capabilities with `experimentalForceLongPolling`. Messages are cached locally and sync automatically when connection is restored.
-
-### Network Monitoring
-Real-time network status detection with visual banners. Users always know their connection state.
-
-### Smart Notifications
-Foreground notifications only appear for chats you're not currently viewing. Tap to navigate directly to the conversation.
-
-### Read Receipt Logic
-- Messages automatically marked as read when chat is opened
-- Checkmarks update in real-time as recipients read messages
-- Works identically in direct chats and groups
-
-## 📄 License
-
-This project is part of a coding challenge and is provided as-is for educational purposes.
-
-## 🙏 Acknowledgments
-
-- Built as part of the WhatsApp-style messaging app challenge
-- Inspired by WhatsApp's clean, functional design
-- Uses Firebase for backend infrastructure
-
----
-
-**Built with ❤️ using React Native, Expo, and Firebase**
 

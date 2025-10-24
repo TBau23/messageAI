@@ -201,6 +201,8 @@ service cloud.firestore {
 - [ ] Conflict resolution (use Firestore as source of truth)
 
 **Technical Notes**: 
+- Use Firestore's built-in offline persistence instead of manual SQLite implementation - we will migrate to SQLite later for performance optimization when needed.
+- Do we need peristentLocalCache from firestore?
 - Save to SQLite first, then to Firestore
 - On app restart, check for unsent messages and retry
 - Use unique localId for optimistic updates

@@ -109,6 +109,24 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
+  setUserOnlineStatus: async (isOnline) => {
+    try {
+      const { user } = get();
+      if (!user) return;
+
+      await updateDoc(doc(db, 'users', user.uid), {
+        online: isOnline,
+        lastSeen: serverTimestamp(),
+      });
+
+      set({ 
+        user: { ...user, online: isOnline } 
+      });
+    } catch (error) {
+      console.error('Error updating online status:', error);
+    }
+  },
+
   signOut: async () => {
     try {
       const { user } = get();
