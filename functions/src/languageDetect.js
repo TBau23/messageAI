@@ -1,5 +1,3 @@
-const franc = require('franc-min');
-
 // Map franc's ISO 639-3 codes to ISO 639-1 codes
 const ISO_MAP = {
   eng: 'en',  // English
@@ -16,19 +14,33 @@ const ISO_MAP = {
   hin: 'hi',  // Hindi
 };
 
+// Cache for franc module (loaded dynamically)
+let francModule = null;
+
+/**
+ * Load franc-min module dynamically (ESM module)
+ */
+async function loadFranc() {
+  if (!francModule) {
+    francModule = await import('franc-min');
+  }
+  return francModule;
+}
+
 /**
  * Detect the language of a text string
  * @param {string} text - Text to analyze
  * @param {string} fallback - Default language if detection fails (default: 'en')
- * @returns {string} ISO 639-1 language code (e.g., 'en', 'es', 'fr')
+ * @returns {Promise<string>} ISO 639-1 language code (e.g., 'en', 'es', 'fr')
  */
-function detectLanguage(text, fallback = 'en') {
+async function detectLanguage(text, fallback = 'en') {
   if (!text || text.trim().length < 10) {
     // Need at least ~10 characters for reliable detection
     return fallback;
   }
 
   try {
+    const { franc } = await loadFranc();
     const franc3Code = franc(text, { minLength: 10 });
     
     // franc returns 'und' for undefined/unable to detect

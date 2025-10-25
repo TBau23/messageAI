@@ -1,10 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
-
-// Initialize admin if not already done
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
+const { FieldValue } = require('firebase-admin/firestore');
 
 /**
  * Update user's AI-related settings (language preferences, etc.)
@@ -32,8 +28,8 @@ exports.updateUserSettings = onCall(async (request) => {
 
     await settingsRef.set({
       defaultLanguage: defaultLanguage || 'en',
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     }, { merge: true });
 
     console.log(`[updateUserSettings] User ${uid} updated language to ${defaultLanguage}`);

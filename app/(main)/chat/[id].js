@@ -17,7 +17,8 @@ import { useAuthStore } from '../../../store/authStore';
 import { useChatStore } from '../../../store/chatStore';
 import { useNotificationStore } from '../../../store/notificationStore';
 import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../firebaseConfig';
+import { db, functions } from '../../../firebaseConfig';
+import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
 import NetworkBanner from '../../../components/NetworkBanner';
 import MessageStatusIndicator from '../../../components/MessageStatusIndicator';
@@ -42,6 +43,13 @@ export default function ChatScreen() {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [showEditGroupNameModal, setShowEditGroupNameModal] = useState(false);
   const [editingGroupName, setEditingGroupName] = useState('');
+  
+  // Translation state
+  const [translationEnabled, setTranslationEnabled] = useState(false);
+  const [showTranslationSettings, setShowTranslationSettings] = useState(false);
+  const [targetLanguage, setTargetLanguage] = useState('es');
+  const [formality, setFormality] = useState('neutral');
+  
   const flatListRef = useRef(null);
   const participantSubscriptionsRef = useRef({});
   const typingTimeoutRef = useRef(null);
@@ -641,6 +649,22 @@ export default function ChatScreen() {
         >
           <Text style={styles.imageButtonText}>📷</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.translationButton, translationEnabled && styles.translationButtonActive]} 
+          onPress={() => {
+            if (translationEnabled) {
+              // If already enabled, toggle settings
+              setShowTranslationSettings(!showTranslationSettings);
+            } else {
+              // If disabled, enable and show settings
+              setTranslationEnabled(true);
+              setShowTranslationSettings(true);
+            }
+          }}
+        >
+          <Text style={styles.translationButtonText}>🌐</Text>
+        </TouchableOpacity>
         
         <TextInput
           style={styles.input}
@@ -783,6 +807,108 @@ export default function ChatScreen() {
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Translation Settings Modal */}
+      <Modal
+        visible={showTranslationSettings}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTranslationSettings(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.translationSettingsModal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Translation Settings</Text>
+              <TouchableOpacity onPress={() => setShowTranslationSettings(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Translation On/Off Toggle */}
+            <View style={styles.translationSettingRow}>
+              <Text style={styles.translationSettingLabel}>Translation Enabled</Text>
+              <TouchableOpacity
+                style={[styles.translationToggle, translationEnabled && styles.translationToggleActive]}
+                onPress={() => setTranslationEnabled(!translationEnabled)}
+              >
+                <View style={[styles.translationToggleThumb, translationEnabled && styles.translationToggleThumbActive]} />
+              </TouchableOpacity>
+            </View>
+
+            {translationEnabled && (
+              <>
+                {/* Language Selector */}
+                <View style={styles.translationSettingSection}>
+                  <Text style={styles.translationSectionTitle}>Target Language</Text>
+                  <View style={styles.languageGrid}>
+                    {[
+                      { code: 'en', name: 'English', flag: '🇬🇧' },
+                      { code: 'es', name: 'Spanish', flag: '🇪🇸' },
+                      { code: 'fr', name: 'French', flag: '🇫🇷' },
+                      { code: 'zh', name: 'Chinese', flag: '🇨🇳' },
+                      { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
+                      { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
+                    ].map((lang) => (
+                      <TouchableOpacity
+                        key={lang.code}
+                        style={[
+                          styles.languageOption,
+                          targetLanguage === lang.code && styles.languageOptionSelected
+                        ]}
+                        onPress={() => setTargetLanguage(lang.code)}
+                      >
+                        <Text style={styles.languageFlag}>{lang.flag}</Text>
+                        <Text style={[
+                          styles.languageName,
+                          targetLanguage === lang.code && styles.languageNameSelected
+                        ]}>
+                          {lang.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* Formality Selector */}
+                <View style={styles.translationSettingSection}>
+                  <Text style={styles.translationSectionTitle}>Formality Level</Text>
+                  <View style={styles.formalityRow}>
+                    {[
+                      { value: 'casual', label: 'Casual', icon: '😊' },
+                      { value: 'neutral', label: 'Neutral', icon: '📝' },
+                      { value: 'formal', label: 'Formal', icon: '👔' },
+                    ].map((option) => (
+                      <TouchableOpacity
+                        key={option.value}
+                        style={[
+                          styles.formalityOption,
+                          formality === option.value && styles.formalityOptionSelected
+                        ]}
+                        onPress={() => setFormality(option.value)}
+                      >
+                        <Text style={styles.formalityIcon}>{option.icon}</Text>
+                        <Text style={[
+                          styles.formalityLabel,
+                          formality === option.value && styles.formalityLabelSelected
+                        ]}>
+                          {option.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </>
+            )}
+
+            <TouchableOpacity
+              style={styles.translationSettingsCloseButton}
+              onPress={() => setShowTranslationSettings(false)}
+            >
+              <Text style={styles.translationSettingsCloseButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
 
       {/* Delivery / Read Detail Modal */}
@@ -1277,5 +1403,151 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 5,
+  },
+  // Translation UI styles
+  translationButton: {
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+  },
+  translationButtonActive: {
+    backgroundColor: '#075E54',
+  },
+  translationButtonText: {
+    fontSize: 20,
+  },
+  translationSettingsModal: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingBottom: 20,
+    maxHeight: '80%',
+  },
+  translationSettingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  translationSettingLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  translationToggle: {
+    width: 50,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ddd',
+    padding: 2,
+    justifyContent: 'center',
+  },
+  translationToggleActive: {
+    backgroundColor: '#075E54',
+  },
+  translationToggleThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    alignSelf: 'flex-start',
+  },
+  translationToggleThumbActive: {
+    alignSelf: 'flex-end',
+  },
+  translationSettingSection: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+  },
+  translationSectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+  },
+  languageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  languageOption: {
+    width: '31%',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  languageOptionSelected: {
+    borderColor: '#075E54',
+    borderWidth: 2,
+    backgroundColor: '#E8F5E9',
+  },
+  languageFlag: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  languageName: {
+    fontSize: 13,
+    color: '#333',
+    textAlign: 'center',
+  },
+  languageNameSelected: {
+    fontWeight: 'bold',
+    color: '#075E54',
+  },
+  formalityRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  formalityOption: {
+    flex: 1,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  formalityOptionSelected: {
+    borderColor: '#075E54',
+    borderWidth: 2,
+    backgroundColor: '#E8F5E9',
+  },
+  formalityIcon: {
+    fontSize: 24,
+    marginBottom: 4,
+  },
+  formalityLabel: {
+    fontSize: 13,
+    color: '#333',
+  },
+  formalityLabelSelected: {
+    fontWeight: 'bold',
+    color: '#075E54',
+  },
+  translationSettingsCloseButton: {
+    backgroundColor: '#075E54',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 16,
+  },
+  translationSettingsCloseButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

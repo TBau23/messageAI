@@ -54,22 +54,44 @@ export default function ProfileScreen() {
   const handleTestAI = async () => {
     try {
       setIsTestingAI(true);
-      console.log('🧪 Testing AI connection...');
+      console.log('🧪 Testing Translation & Cache...');
       
-      const testAI = httpsCallable(functions, 'testAI');
-      const result = await testAI({});
+      const translateText = httpsCallable(functions, 'translateText');
       
-      console.log('✅ AI Test Success:', result.data);
+      // First call - should hit OpenAI
+      console.log('📞 First call (uncached)...');
+      const result1 = await translateText({
+        text: 'Hello, how are you today?',
+        targetLanguage: 'es',
+        formality: 'neutral'
+      });
+      console.log('✅ First call:', result1.data.metadata.responseTime + 'ms', 
+                  'Cached:', result1.data.cached);
+      
+      // Second call - should hit cache
+      console.log('📞 Second call (should be cached)...');
+      const result2 = await translateText({
+        text: 'Hello, how are you today?',
+        targetLanguage: 'es',
+        formality: 'neutral'
+      });
+      console.log('✅ Second call:', result2.data.metadata.responseTime + 'ms',
+                  'Cached:', result2.data.cached);
       
       Alert.alert(
-        '✅ AI Test Success!',
-        `Response: ${result.data.result}\n\nTimestamp: ${result.data.timestamp}`,
+        '✅ Translation & Cache Test!',
+        `Original: "Hello, how are you today?"\n` +
+        `Translation: "${result1.data.translatedText}"\n\n` +
+        `First call: ${result1.data.metadata.responseTime}ms (uncached)\n` +
+        `Second call: ${result2.data.metadata.responseTime}ms (${result2.data.cached ? 'CACHED ⚡' : 'not cached'})\n\n` +
+        `Speedup: ${(result1.data.metadata.responseTime / result2.data.metadata.responseTime).toFixed(1)}x faster\n` +
+        `Quota remaining: ${result2.data.quotaRemaining}`,
         [{ text: 'OK' }]
       );
     } catch (error) {
-      console.error('❌ AI Test Failed:', error);
+      console.error('❌ Test Failed:', error);
       Alert.alert(
-        '❌ AI Test Failed',
+        '❌ Test Failed',
         `Error: ${error.message}\n\nCheck console logs for details.`,
         [{ text: 'OK' }]
       );

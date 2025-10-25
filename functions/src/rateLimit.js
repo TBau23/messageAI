@@ -1,10 +1,6 @@
 const admin = require('firebase-admin');
 const { HttpsError } = require('firebase-functions/v2/https');
-
-// Initialize admin if not already done
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
+const { FieldValue } = require('firebase-admin/firestore');
 
 // Daily limits per feature type
 const LIMITS = {
@@ -47,8 +43,8 @@ async function checkRateLimit(uid, featureType) {
 
     // Increment usage atomically
     await usageRef.set({
-      [featureType]: admin.firestore.FieldValue.increment(1),
-      lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+      [featureType]: FieldValue.increment(1),
+      lastUpdated: FieldValue.serverTimestamp(),
     }, { merge: true });
 
     const remaining = LIMITS[featureType] - count - 1;

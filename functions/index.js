@@ -6,6 +6,10 @@
 // Load environment variables (including OPENAI_API_KEY)
 require('dotenv').config();
 
+// Initialize Firebase Admin SDK (must be done before importing other modules)
+const admin = require('firebase-admin');
+admin.initializeApp();
+
 const { setGlobalOptions } = require("firebase-functions/v2");
 
 // Set global options for cost control
@@ -15,9 +19,11 @@ setGlobalOptions({ maxInstances: 10 });
 const { testAI } = require('./src/testAI');
 const { updateUserSettings, getUserSettings } = require('./src/userSettings');
 const { getAIUsage } = require('./src/aiUsage');
+const { translateText } = require('./src/translate');
 
 // Export functions
 exports.testAI = testAI;
 exports.updateUserSettings = updateUserSettings;
 exports.getUserSettings = getUserSettings;
 exports.getAIUsage = getAIUsage;
+exports.translateText = translateText;
