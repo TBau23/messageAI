@@ -9,7 +9,33 @@ class Database {
     console.log('Initializing SQLite database...');
     this.db = await SQLite.openDatabaseAsync('messageai.db');
     await this.createTables();
+    await this.migrateSchema();
     console.log('✅ Database initialized');
+  }
+
+  async migrateSchema() {
+    try {
+      // Migration: Add image fields to messages table (Phase 3)
+      // Check if columns exist by trying to select them
+      const testQuery = await this.db.getFirstAsync(
+        'SELECT image_url FROM messages LIMIT 1'
+      ).catch(() => null);
+
+      if (testQuery === null) {
+        console.log('🔄 Migrating database schema: Adding image support...');
+        
+        // Columns don't exist, add them
+        await this.db.execAsync(`
+          ALTER TABLE messages ADD COLUMN image_url TEXT;
+          ALTER TABLE messages ADD COLUMN image_width INTEGER;
+          ALTER TABLE messages ADD COLUMN image_height INTEGER;
+        `);
+        
+        console.log('✅ Database migration complete: Image support added');
+      }
+    } catch (error) {
+      console.warn('Database migration check failed (this is OK for new databases):', error.message);
+    }
   }
 
   async createTables() {
@@ -18,12 +44,15 @@ class Database {
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL,
         sender_id TEXT NOT NULL,
-        text TEXT NOT NULL,
+        text TEXT,
         timestamp INTEGER NOT NULL,
         delivered_to TEXT,
         read_by TEXT,
         delivered_receipts TEXT,
         read_receipts TEXT,
+        image_url TEXT,
+        image_width INTEGER,
+        image_height INTEGER,
         cached_at INTEGER NOT NULL
       );
       
@@ -81,8 +110,9 @@ class Database {
         return;
       }
       
-      if (!message.text) {
-        console.warn('Skipping message cache: missing text', { messageId: message.id });
+      // Message must have either text or image
+      if (!message.text && !message.imageURL) {
+        console.warn('Skipping message cache: missing both text and imageURL', { messageId: message.id });
         return;
       }
 
@@ -90,18 +120,21 @@ class Database {
       await this.db.runAsync(
         `INSERT OR REPLACE INTO messages 
          (id, conversation_id, sender_id, text, timestamp, delivered_to, 
-          read_by, delivered_receipts, read_receipts, cached_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          read_by, delivered_receipts, read_receipts, image_url, image_width, image_height, cached_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           message.id,
           conversationId,
           senderId,
-          message.text,
+          message.text || null,
           typeof message.timestamp === 'number' ? message.timestamp : message.timestamp?.toMillis?.() || Date.now(),
           JSON.stringify(message.deliveredTo || message.delivered_to || []),
           JSON.stringify(message.readBy || message.read_by || []),
           JSON.stringify(message.deliveredReceipts || message.delivered_receipts || {}),
           JSON.stringify(message.readReceipts || message.read_receipts || {}),
+          message.imageURL || null,
+          message.imageWidth || null,
+          message.imageHeight || null,
           Date.now()
         ]
       );
@@ -122,17 +155,32 @@ class Database {
         [conversationId]
       );
       
-      return rows.map(row => ({
-        id: row.id,
-        conversationId: row.conversation_id,
-        senderId: row.sender_id,
-        text: row.text,
-        timestamp: new Date(row.timestamp),
-        deliveredTo: JSON.parse(row.delivered_to || '[]'),
-        readBy: JSON.parse(row.read_by || '[]'),
-        deliveredReceipts: JSON.parse(row.delivered_receipts || '{}'),
-        readReceipts: JSON.parse(row.read_receipts || '{}'),
-      }));
+      return rows.map(row => {
+        const baseMessage = {
+          id: row.id,
+          conversationId: row.conversation_id,
+          senderId: row.sender_id,
+          timestamp: new Date(row.timestamp),
+          deliveredTo: JSON.parse(row.delivered_to || '[]'),
+          readBy: JSON.parse(row.read_by || '[]'),
+          deliveredReceipts: JSON.parse(row.delivered_receipts || '{}'),
+          readReceipts: JSON.parse(row.read_receipts || '{}'),
+        };
+        
+        // Add text if exists
+        if (row.text) {
+          baseMessage.text = row.text;
+        }
+        
+        // Add image data if exists
+        if (row.image_url) {
+          baseMessage.imageURL = row.image_url;
+          baseMessage.imageWidth = row.image_width;
+          baseMessage.imageHeight = row.image_height;
+        }
+        
+        return baseMessage;
+      });
     } catch (error) {
       console.error('Error getting messages from cache:', error);
       return [];

@@ -49,6 +49,33 @@ export default function ChatListScreen() {
     );
   };
 
+  const handleResetDatabase = async () => {
+    Alert.alert(
+      'Reset Database',
+      'This will DROP all tables and recreate them with the latest schema. All cached data will be lost.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await database.resetDatabase();
+              setShowMenu(false);
+              Alert.alert('Success', 'Database reset complete! Reloading...');
+              // Force reload conversations
+              if (user) {
+                subscribeToConversations(user.uid);
+              }
+            } catch (error) {
+              Alert.alert('Error', 'Failed to reset database: ' + error.message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const renderConversation = ({ item }) => {
     const lastMessageTime = item.lastMessage?.timestamp?.toDate?.();
     const timeString = lastMessageTime 
@@ -154,6 +181,9 @@ export default function ChatListScreen() {
           </TouchableOpacity>
           <TouchableOpacity style={styles.menuItem} onPress={handleClearCache}>
             <Text style={styles.menuItemText}>Clear Cache</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.menuItem} onPress={handleResetDatabase}>
+            <Text style={[styles.menuItemText, { color: '#d32f2f' }]}>Reset Database</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.menuItem} onPress={handleSignOut}>
             <Text style={styles.menuItemText}>Sign Out</Text>
