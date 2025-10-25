@@ -1,7 +1,8 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAuth, getReactNativePersistence } from 'firebase/auth';
-import { initializeFirestore } from 'firebase/firestore';
+import { initializeAuth, getReactNativePersistence, connectAuthEmulator } from 'firebase/auth';
+import { initializeFirestore, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const firebaseConfig = {
@@ -24,3 +25,25 @@ export const db = initializeFirestore(app, {
 });
 
 export const storage = getStorage(app);
+
+export const functions = getFunctions(app);
+
+// Connect to emulators in development mode
+if (__DEV__) {
+  const EMULATOR_HOST = '127.0.0.1';
+  
+  // Only connect once to avoid "already connected" errors
+  let emulatorsConnected = false;
+  
+  if (!emulatorsConnected) {
+    try {
+      connectAuthEmulator(auth, `http://${EMULATOR_HOST}:9099`, { disableWarnings: true });
+      connectFirestoreEmulator(db, EMULATOR_HOST, 8080);
+      connectFunctionsEmulator(functions, EMULATOR_HOST, 5001);
+      console.log('✅ Connected to Firebase Emulators');
+      emulatorsConnected = true;
+    } catch (error) {
+      console.warn('⚠️ Emulator connection warning (might already be connected):', error.message);
+    }
+  }
+}

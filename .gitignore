@@ -51,6 +51,7 @@ database-debug.log
 pubsub-debug.log
 firestore.rules
 storage.rules
+emulator-data/
 
 # IDE
 .vscode/

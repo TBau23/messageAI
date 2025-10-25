@@ -13,7 +13,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/authStore';
 import { updateDoc, doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebaseConfig';
+import { db, functions } from '../../firebaseConfig';
+import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
 import Avatar from '../../components/Avatar';
 import { pickImageFromLibrary, uploadProfilePhoto } from '../../utils/imageUtils';
@@ -26,6 +27,7 @@ export default function ProfileScreen() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  const [isTestingAI, setIsTestingAI] = useState(false);
 
   const handleBack = () => {
     router.push('/');
@@ -47,6 +49,33 @@ export default function ProfileScreen() {
         },
       ]
     );
+  };
+
+  const handleTestAI = async () => {
+    try {
+      setIsTestingAI(true);
+      console.log('🧪 Testing AI connection...');
+      
+      const testAI = httpsCallable(functions, 'testAI');
+      const result = await testAI({});
+      
+      console.log('✅ AI Test Success:', result.data);
+      
+      Alert.alert(
+        '✅ AI Test Success!',
+        `Response: ${result.data.result}\n\nTimestamp: ${result.data.timestamp}`,
+        [{ text: 'OK' }]
+      );
+    } catch (error) {
+      console.error('❌ AI Test Failed:', error);
+      Alert.alert(
+        '❌ AI Test Failed',
+        `Error: ${error.message}\n\nCheck console logs for details.`,
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setIsTestingAI(false);
+    }
   };
 
   const handleClearCache = () => {
@@ -261,6 +290,17 @@ export default function ProfileScreen() {
 
         {/* Actions */}
         <View style={styles.actionsSection}>
+          {/* TEST AI BUTTON - Remove after Epic 1 testing */}
+          <TouchableOpacity 
+            style={[styles.actionButton, styles.testAIButton]} 
+            onPress={handleTestAI}
+            disabled={isTestingAI}
+          >
+            <Text style={styles.actionButtonText}>
+              {isTestingAI ? '🔄 Testing AI...' : '🧪 Test AI Connection'}
+            </Text>
+          </TouchableOpacity>
+
           <TouchableOpacity style={styles.actionButton} onPress={handleClearCache}>
             <Text style={styles.actionButtonText}>Clear Cache</Text>
           </TouchableOpacity>
@@ -421,6 +461,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#000',
+  },
+  testAIButton: {
+    backgroundColor: '#e3f2fd',
   },
   signOutButton: {
     backgroundColor: '#ffebee',
