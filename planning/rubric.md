@@ -238,15 +238,7 @@ Excellent (2 points)
 * Or, app runs on emulator locally
 * Works on real devices
 * Fast and reliable
-Good (1 point)
-* Deployed but minor issues
-* Accessible with some effort
-* Works on most devices
-Poor (0 points)
-* Not deployed
-* Deployment broken
-* Cannot access or test
-Section 6: Required Deliverables (Pass/Fail)
+
 
 Bonus Points (Maximum +10)
 Innovation (+3 points)

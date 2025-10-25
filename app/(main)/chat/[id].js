@@ -744,11 +744,19 @@ export default function ChatScreen() {
       <Modal
         visible={showEditGroupNameModal}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => setShowEditGroupNameModal(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.editGroupModalOverlay}
+        >
+          <TouchableOpacity 
+            style={styles.editGroupModalBackdrop}
+            activeOpacity={1}
+            onPress={() => setShowEditGroupNameModal(false)}
+          />
+          <View style={styles.editGroupModalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Edit Group Name</Text>
               <TouchableOpacity onPress={() => setShowEditGroupNameModal(false)}>
@@ -763,6 +771,8 @@ export default function ChatScreen() {
               placeholder="Group name"
               autoFocus
               maxLength={50}
+              returnKeyType="done"
+              onSubmitEditing={handleSaveGroupName}
             />
             
             <TouchableOpacity
@@ -772,7 +782,7 @@ export default function ChatScreen() {
               <Text style={styles.saveGroupNameButtonText}>Save</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Delivery / Read Detail Modal */}
@@ -1228,16 +1238,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 20,
     marginTop: 10,
+    marginHorizontal: 20,
   },
   saveGroupNameButton: {
     backgroundColor: '#075E54',
     padding: 14,
     borderRadius: 8,
     alignItems: 'center',
+    marginHorizontal: 20,
   },
   saveGroupNameButtonText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  editGroupModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  editGroupModalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  editGroupModalContent: {
+    width: '100%',
+    maxWidth: 400,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 5,
   },
 });

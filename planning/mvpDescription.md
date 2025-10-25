@@ -7,29 +7,6 @@ Now imagine adding AI to this. What if your messaging app could automatically su
 This project challenges you to build both a production-quality messaging infrastructure—like WhatsApp—and AI features that enhance the messaging experience using LLMs, agents, and RAG pipelines.
 Why This Matters
 The future of messaging isn't just about sending texts—it's about intelligent communication. You'll be building the foundation for how AI can make conversations more productive, accessible, and meaningful.
-Project Overview
-This is a one-week sprint with three key deadlines:
-* MVP: Tuesday (24 hours)
-* Early Submission: Friday (4 days)
-* Final: Sunday (7 days)
-You'll build in two phases: first the core messaging infrastructure with real-time sync and offline support, then AI features tailored to a specific user persona.
-MVP Requirements (24 Hours)
-This is a hard gate. To pass the MVP checkpoint, you must have:
-* One-on-one chat functionality
-* Real-time message delivery between 2+ users
-* Message persistence (survives app restarts)
-* Optimistic UI updates (messages appear instantly before server confirmation)
-* Online/offline status indicators
-* Message timestamps
-* User authentication (users have accounts/profiles)
-* Basic group chat functionality (3+ users in one conversation)
-* Message read receipts
-* Push notifications working (at least in foreground)
-* Deployment: Running on local emulator/simulator with deployed backend (TestFlight/APK/Expo Go if possible, but not required for MVP)
-
-THE ONLY THINGS REQUIRED FOR MVP ARE THE ONES LISTED ABOVE. EVERYTHING ELSE IS ADDITIONAL CONTEXT. SEE rubric.md for more details.
-
-The MVP isn't about features—it's about proving your messaging infrastructure is solid. A simple chat app with reliable message delivery is worth more than a feature-rich app with messages that don't sync reliably.
 
 
 Core Messaging Infrastructure
@@ -90,8 +67,6 @@ Your agent should have:
 * Function calling capabilities
 * Memory/state management across interactions
 * Error handling and recovery
-Technical Stack (Recommended)
-The Golden Path: Firebase + Swift
 
 React Native:
 * Expo Router, Expo SQLite, Expo Notifications
