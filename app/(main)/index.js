@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store/authStore';
 import { useChatStore } from '../../store/chatStore';
 import { format } from 'date-fns';
 import { database } from '../../utils/database';
+import Avatar from '../../components/Avatar';
 
 export default function ChatListScreen() {
   const router = useRouter();
@@ -76,24 +77,45 @@ export default function ChatListScreen() {
       subtitleText = item.lastMessage?.text || 'No messages yet';
     }
 
+    // Check if message is unread
+    const lastMsg = item.lastMessage;
+    const isUnread = lastMsg && 
+                     lastMsg.senderId !== user?.uid && 
+                     !(lastMsg.readBy || []).includes(user?.uid);
+    
+    
+
     return (
       <TouchableOpacity
         style={styles.conversationItem}
         onPress={() => router.push(`/chat/${item.id}`)}
       >
-        <View style={[styles.avatar, item.type === 'group' && styles.groupAvatar]}>
-          <Text style={styles.avatarText}>
-            {avatarText}
-          </Text>
-        </View>
+        {item.type === 'group' ? (
+          // For groups, use placeholder for now (will be replaced with GroupAvatar)
+          <View style={[styles.avatar, styles.groupAvatar]}>
+            <Text style={styles.avatarText}>{avatarText}</Text>
+          </View>
+        ) : (
+          // For direct chats, use Avatar component with profile photo
+          <Avatar
+            photoURL={item.otherUser?.photoURL}
+            displayName={item.otherUser?.displayName}
+            userId={item.otherUser?.uid}
+            size={50}
+            style={{ marginRight: 15 }}
+          />
+        )}
         <View style={styles.conversationContent}>
           <View style={styles.conversationHeader}>
-            <Text style={styles.conversationName}>
+            <Text style={[styles.conversationName, isUnread && styles.conversationNameUnread]}>
               {displayName}
             </Text>
-            <Text style={styles.conversationTime}>{timeString}</Text>
+            <View style={styles.timeContainer}>
+              {isUnread && <View style={styles.unreadDot} />}
+              <Text style={styles.conversationTime}>{timeString}</Text>
+            </View>
           </View>
-          <Text style={styles.conversationMessage} numberOfLines={1}>
+          <Text style={[styles.conversationMessage, isUnread && styles.conversationMessageUnread]} numberOfLines={1}>
             {subtitleText}
           </Text>
         </View>
@@ -121,6 +143,15 @@ export default function ChatListScreen() {
 
       {showMenu && (
         <View style={styles.menu}>
+          <TouchableOpacity 
+            style={styles.menuItem} 
+            onPress={() => {
+              setShowMenu(false);
+              router.push('/profile');
+            }}
+          >
+            <Text style={styles.menuItemText}>Profile</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.menuItem} onPress={handleClearCache}>
             <Text style={styles.menuItemText}>Clear Cache</Text>
           </TouchableOpacity>
@@ -239,6 +270,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#000',
   },
+  conversationNameUnread: {
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  timeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  unreadDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#25D366',
+    marginRight: 5,
+  },
   conversationTime: {
     fontSize: 12,
     color: '#999',
@@ -246,6 +292,10 @@ const styles = StyleSheet.create({
   conversationMessage: {
     fontSize: 14,
     color: '#666',
+  },
+  conversationMessageUnread: {
+    fontWeight: '600',
+    color: '#000',
   },
   emptyState: {
     flex: 1,

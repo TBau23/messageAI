@@ -28,6 +28,10 @@ export default function MainLayout() {
           name="chat/[id]" 
           options={{ headerShown: false }} 
         />
+        <Stack.Screen 
+          name="profile" 
+          options={{ headerShown: false }} 
+        />
       </Stack>
       
       {/* Foreground notification banner */}

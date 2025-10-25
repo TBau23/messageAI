@@ -67,7 +67,7 @@ export const useChatStore = create((set, get) => ({
 
   // Subscribe to user's conversations
   subscribeToConversations: (userId) => {
-    console.log(`🔔 subscribeToConversations called for user: ${userId}`);
+
     
     // Reset initial load flag when subscribing
     set({ isInitialLoad: true });
@@ -75,7 +75,6 @@ export const useChatStore = create((set, get) => ({
     // 1. Load from SQLite cache first (instant display)
     database.getConversations().then(async (cachedConversations) => {
       if (cachedConversations.length > 0) {
-        console.log(`📦 Loaded ${cachedConversations.length} conversations from cache`);
         
         // Process cached conversations with participant details
         const processedConvos = await Promise.all(
@@ -137,7 +136,6 @@ export const useChatStore = create((set, get) => ({
         }, {});
         const dedupedCacheConvos = Object.values(cacheConvoMap);
         
-        console.log(`📊 Cache: ${processedConvos.length} total, ${dedupedCacheConvos.length} after dedup`);
         if (processedConvos.length !== dedupedCacheConvos.length) {
           console.warn('⚠️ Found duplicate conversations in cache!');
         }
@@ -156,7 +154,6 @@ export const useChatStore = create((set, get) => ({
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      console.log(`📥 Firestore snapshot received: ${snapshot.docs.length} conversations`);
       const { previousConversations, isInitialLoad } = get();
       
       const convos = await Promise.all(
@@ -269,7 +266,6 @@ export const useChatStore = create((set, get) => ({
       }, {});
       
       const finalConvos = Object.values(conversationsMap);
-      console.log(`📊 Final: ${dedupedConvos.length} merged, ${finalConvos.length} after dedup`);
       
       if (dedupedConvos.length !== finalConvos.length) {
         console.warn('⚠️ Found duplicates during Firestore merge!');
@@ -293,10 +289,15 @@ export const useChatStore = create((set, get) => ({
     // 1. Load from SQLite cache first (instant display)
     database.getMessagesByConversation(conversationId).then(cachedMessages => {
       if (cachedMessages.length > 0) {
-        console.log(`📦 Loaded ${cachedMessages.length} messages from cache`);
+        
+        // CRITICAL: Check if this conversation is still active before setting messages
+        const state = get();
+        if (state.currentConversation !== conversationId) {
+          console.warn(`⚠️ Ignoring cached messages for ${conversationId} - conversation changed to ${state.currentConversation}`);
+          return;
+        }
         
         // Process cached messages with pending messages
-        const state = get();
         const pendingForConversation = state.pendingMessages[conversationId] || [];
         
         const cachedProcessed = cachedMessages.map(message => ({
@@ -327,6 +328,13 @@ export const useChatStore = create((set, get) => ({
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
+      // CRITICAL: Check if this conversation is still active before processing
+      const currentState = get();
+      if (currentState.currentConversation !== conversationId) {
+        console.warn(`⚠️ Ignoring Firestore update for ${conversationId} - conversation changed to ${currentState.currentConversation}`);
+        return;
+      }
+      
       const docs = snapshot.docs.map(docSnap => {
         const data = docSnap.data();
         return {
@@ -385,9 +393,6 @@ export const useChatStore = create((set, get) => ({
             ...metric,
             deliveryLatencyMs: latency
           };
-          if (typeof __DEV__ !== 'undefined' && __DEV__) {
-            console.log(`Message ${message.id} delivered in ${latency}ms`);
-          }
         }
       });
 
@@ -425,6 +430,14 @@ export const useChatStore = create((set, get) => ({
       const combinedMessages = [...processedDocs, ...processedPending].sort(
         (a, b) => (a.orderTimestamp || 0) - (b.orderTimestamp || 0)
       );
+
+      // CRITICAL: Final check before setting messages
+      // Re-check state in case conversation changed during async operations
+      const finalState = get();
+      if (finalState.currentConversation !== conversationId) {
+        console.warn(`⚠️ Ignoring final message set for ${conversationId} - conversation changed to ${finalState.currentConversation}`);
+        return;
+      }
 
       set({
         messages: combinedMessages,
@@ -516,8 +529,8 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  // Send a message
-  sendMessage: async (conversationId, senderId, text) => {
+  // Send a message (with optional image data)
+  sendMessage: async (conversationId, text, senderId, imageData = null) => {
     const localId = tempId();
 
     const sentAt = Date.now();
@@ -532,7 +545,12 @@ export const useChatStore = create((set, get) => ({
       status: 'sending',
       conversationId,
       clientSentAt: sentAt,
-      orderTimestamp: sentAt
+      orderTimestamp: sentAt,
+      ...(imageData && {
+        imageURL: imageData.imageURL,
+        imageWidth: imageData.imageWidth,
+        imageHeight: imageData.imageHeight,
+      }),
     };
 
     try {
@@ -571,7 +589,12 @@ export const useChatStore = create((set, get) => ({
           },
           readReceipts: {
             [senderId]: serverTimestamp()
-          }
+          },
+          ...(imageData && {
+            imageURL: imageData.imageURL,
+            imageWidth: imageData.imageWidth,
+            imageHeight: imageData.imageHeight,
+          }),
         }
       );
 
@@ -580,7 +603,8 @@ export const useChatStore = create((set, get) => ({
         lastMessage: {
           text,
           senderId,
-          timestamp: serverTimestamp()
+          timestamp: serverTimestamp(),
+          readBy: [senderId]  // Sender has read their own message
         },
         updatedAt: serverTimestamp()
       }).catch((err) => {
@@ -657,17 +681,19 @@ export const useChatStore = create((set, get) => ({
       };
     });
 
-    return await get().sendMessage(conversationId, senderId, message.text);
+    return await get().sendMessage(conversationId, message.text, senderId);
   },
 
   // Mark messages as read
   markMessagesAsRead: async (conversationId, messageIds, userId) => {
     try {
+      
       // Filter out temp IDs and cached-only messages
       const validMessageIds = (messageIds || []).filter(
         (messageId) => messageId && !messageId.startsWith('temp_') && messageId.length > 10
       );
 
+      
       if (validMessageIds.length === 0) {
         return;
       }
@@ -692,6 +718,51 @@ export const useChatStore = create((set, get) => ({
         });
 
         await Promise.allSettled(promises);
+      }
+
+      // Update the conversation's lastMessage.readBy if we're marking the most recent message
+      // This ensures the chat list shows the correct unread status
+      try {
+        const conversationRef = doc(db, 'conversations', conversationId);
+        const conversationSnap = await getDoc(conversationRef);
+        
+        if (conversationSnap.exists()) {
+          const conversationData = conversationSnap.data();
+          const lastMessage = conversationData.lastMessage;
+          
+          // Check if any of the messages we just marked as read matches the lastMessage
+          // We need to get the actual message to find its localId or compare other fields
+          if (lastMessage && validMessageIds.length > 0) {
+            // Get the most recent message from our local state or fetch it
+            const messages = get().messages;
+            const mostRecentMarkedMessage = messages
+              .filter(msg => validMessageIds.includes(msg.id))
+              .sort((a, b) => {
+                const aTime = toMillis(a.timestamp) || 0;
+                const bTime = toMillis(b.timestamp) || 0;
+                return bTime - aTime;
+              })[0];
+
+            // If the most recent marked message matches the conversation's last message timestamp,
+            // update the lastMessage.readBy array
+            if (mostRecentMarkedMessage) {
+              const lastMsgTime = toMillis(lastMessage.timestamp);
+              const markedMsgTime = toMillis(mostRecentMarkedMessage.timestamp);
+              
+              // Allow 1 second tolerance for timestamp comparison
+              if (lastMsgTime && markedMsgTime && Math.abs(lastMsgTime - markedMsgTime) < 1000) {
+
+                await updateDoc(conversationRef, {
+                  'lastMessage.readBy': arrayUnion(userId)
+                });
+
+              } 
+            }
+          }
+        }
+      } catch (error) {
+        // Non-critical error - don't throw, just log
+        console.warn('Could not update conversation lastMessage.readBy:', error.message);
       }
     } catch (error) {
       console.error('Error marking messages as read:', error);
@@ -781,7 +852,6 @@ export const useChatStore = create((set, get) => ({
       const unreadCount = get().calculateUnreadCount(userId);
       set({ unreadCount });
       await setBadgeCount(unreadCount);
-      console.log(`📛 Badge count updated: ${unreadCount}`);
     } catch (error) {
       console.error('Error updating badge count:', error);
     }
@@ -790,31 +860,27 @@ export const useChatStore = create((set, get) => ({
   // Send push notification to recipients
   sendPushToRecipients: async (conversationId, senderName, messageText, senderId) => {
     try {
-      console.log(`📤 Attempting to send push for conversation ${conversationId}`);
       
       // Get conversation data
       const conversationDoc = await getDoc(doc(db, 'conversations', conversationId));
       if (!conversationDoc.exists()) {
-        console.log('❌ Conversation not found for push notification');
+
         return;
       }
 
       const conversationData = conversationDoc.data();
       const participants = conversationData.participants || [];
-      console.log(`👥 Participants: ${participants.join(', ')}`);
 
       // Get recipients (exclude sender)
       const recipients = participants.filter(id => id !== senderId);
-      console.log(`📨 Recipients (excluding sender): ${recipients.join(', ')}`);
+
 
       // Send push to each recipient
       for (const recipientId of recipients) {
-        console.log(`\n🔍 Processing recipient: ${recipientId}`);
         
         // Get recipient's push token
         const recipientDoc = await getDoc(doc(db, 'users', recipientId));
         if (!recipientDoc.exists()) {
-          console.log(`❌ Recipient user document not found`);
           continue;
         }
 

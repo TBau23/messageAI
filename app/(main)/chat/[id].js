@@ -7,10 +7,11 @@ import {
   TouchableOpacity, 
   KeyboardAvoidingView,
   Platform,
-  Modal
+  Modal,
+  Alert
 } from 'react-native';
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../store/authStore';
 import { useChatStore } from '../../../store/chatStore';
@@ -20,6 +21,10 @@ import { db } from '../../../firebaseConfig';
 import { format } from 'date-fns';
 import NetworkBanner from '../../../components/NetworkBanner';
 import MessageStatusIndicator from '../../../components/MessageStatusIndicator';
+import Avatar from '../../../components/Avatar';
+import { pickImageForMessage, uploadMessageImage } from '../../../utils/imageUtils';
+import { Image } from 'expo-image';
+import { updateDoc } from 'firebase/firestore';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams();
@@ -33,12 +38,17 @@ export default function ChatScreen() {
   const [typingUsers, setTypingUsers] = useState({});
   const [showMemberList, setShowMemberList] = useState(false);
   const [selectedStatusMessage, setSelectedStatusMessage] = useState(null);
+  const [selectedImage, setSelectedImage] = useState(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [showEditGroupNameModal, setShowEditGroupNameModal] = useState(false);
+  const [editingGroupName, setEditingGroupName] = useState('');
   const flatListRef = useRef(null);
   const participantSubscriptionsRef = useRef({});
   const typingTimeoutRef = useRef(null);
   const typingActiveRef = useRef(false);
   const lastTypingSignalRef = useRef(0);
   const retryingMessagesRef = useRef(new Set());
+  const isFocusedRef = useRef(false);
 
   const toDisplayDate = useCallback((value) => {
     if (!value) return null;
@@ -235,20 +245,42 @@ export default function ChatScreen() {
     }
   }, [messages]);
 
+  // Track when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      isFocusedRef.current = true;
+      
+      return () => {
+        isFocusedRef.current = false;
+      };
+    }, [id])
+  );
+
   // Mark messages as read when chat is viewed
   useEffect(() => {
+    // CRITICAL: Only mark as read if the screen is actually focused
+    if (!isFocusedRef.current) {
+      return;
+    }
+    
     if (id && messages.length > 0 && user) {
+      
       // Find unread messages (not in readBy array)
       // Only mark messages that are confirmed from Firestore (not cache-only)
       const unreadMessages = messages.filter(
-        msg => msg.senderId !== user.uid && 
-               !(msg.readBy || []).includes(user.uid) &&
-               !msg._fromCache // Skip cache-only messages
+        msg => {
+          const isFromMe = msg.senderId === user.uid;
+          const isAlreadyRead = (msg.readBy || []).includes(user.uid);
+          const isFromCache = msg._fromCache;
+          
+          return !isFromMe && !isAlreadyRead && !isFromCache;
+        }
       );
       
       if (unreadMessages.length > 0) {
         const messageIds = unreadMessages.map(msg => msg.id);
         useChatStore.getState().markMessagesAsRead(id, messageIds, user.uid);
+      } else {
       }
     }
   }, [id, messages, user]);
@@ -268,7 +300,7 @@ export default function ChatScreen() {
     const messageText = inputText.trim();
     setInputText('');
 
-    const result = await sendMessage(id, user.uid, messageText);
+    const result = await sendMessage(id, messageText, user.uid);
 
     if (!result.success) {
       // Show error (you could add a toast notification here)
@@ -288,6 +320,32 @@ export default function ChatScreen() {
     }
 
     retryingMessagesRef.current.delete(message.localId);
+  };
+
+  const handleEditGroupName = () => {
+    if (conversationData?.type === 'group') {
+      setEditingGroupName(conversationData.name || '');
+      setShowEditGroupNameModal(true);
+    }
+  };
+
+  const handleSaveGroupName = async () => {
+    if (!editingGroupName.trim()) {
+      Alert.alert('Error', 'Group name cannot be empty');
+      return;
+    }
+
+    try {
+      await updateDoc(doc(db, 'conversations', id), {
+        name: editingGroupName.trim(),
+        updatedAt: serverTimestamp()
+      });
+      setShowEditGroupNameModal(false);
+      setEditingGroupName('');
+    } catch (error) {
+      console.error('Error updating group name:', error);
+      Alert.alert('Error', 'Failed to update group name');
+    }
   };
 
   // Calculate which message should show the read receipt
@@ -368,13 +426,31 @@ export default function ChatScreen() {
           {isGroup && !isMyMessage && (
             <Text style={styles.senderName}>{senderName}</Text>
           )}
-          <Text style={[
-            styles.messageText,
-            isMyMessage ? styles.myMessageText : styles.otherMessageText,
-            isMyMessage && isFailed && styles.failedMessageText
-          ]}>
-            {item.text}
-          </Text>
+          
+          {/* Show image if exists */}
+          {item.imageURL && (
+            <Image
+              source={{ uri: item.imageURL }}
+              style={{
+                width: 200,
+                height: item.imageHeight ? (200 * item.imageHeight / item.imageWidth) : 200,
+                borderRadius: 8,
+                marginBottom: item.text ? 8 : 0,
+              }}
+              contentFit="cover"
+            />
+          )}
+          
+          {/* Show text if exists */}
+          {item.text && (
+            <Text style={[
+              styles.messageText,
+              isMyMessage ? styles.myMessageText : styles.otherMessageText,
+              isMyMessage && isFailed && styles.failedMessageText
+            ]}>
+              {item.text}
+            </Text>
+          )}
           <View style={styles.messageFooter}>
             <Text style={[
               styles.messageTime,
@@ -481,12 +557,41 @@ export default function ChatScreen() {
           <TouchableOpacity onPress={() => router.push('/')} style={styles.backButton}>
             <Text style={styles.backText}>←</Text>
           </TouchableOpacity>
+          
+          {/* Avatar */}
+          {conversationData?.type === 'group' ? (
+            // Group placeholder (will be replaced with GroupAvatar later)
+            <View style={styles.headerAvatar}>
+              <View style={[styles.placeholderAvatar, { backgroundColor: '#128C7E' }]}>
+                <Text style={styles.placeholderText}>
+                  {(conversationData.name?.[0] || 'G').toUpperCase()}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            // Direct chat - show other user's avatar
+            conversationData && otherUserId && (
+              <Avatar
+                photoURL={participantMap[otherUserId]?.photoURL}
+                displayName={otherDisplayName}
+                userId={otherUserId}
+                size={40}
+              />
+            )
+          )}
+          
           <View style={styles.headerInfo}>
-            <Text style={styles.headerName}>
-              {conversationData?.type === 'group' 
-                ? conversationData.name || 'Group Chat'
-                : otherDisplayName}
-            </Text>
+            {conversationData?.type === 'group' ? (
+              <TouchableOpacity onPress={handleEditGroupName}>
+                <Text style={styles.headerName}>
+                  {conversationData.name || 'Group Chat'} ✏️
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={styles.headerName}>
+                {otherDisplayName}
+              </Text>
+            )}
             {conversationData?.type === 'group' ? (
               <TouchableOpacity onPress={() => setShowMemberList(true)}>
                 <Text style={groupStatusStyles}>
@@ -513,7 +618,30 @@ export default function ChatScreen() {
         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
       />
 
+      {/* Image Preview */}
+      {selectedImage && (
+        <View style={styles.imagePreview}>
+          <Image source={{ uri: selectedImage.uri }} style={styles.previewImage} contentFit="cover" />
+          <TouchableOpacity style={styles.removeImage} onPress={() => setSelectedImage(null)}>
+            <Text style={styles.removeImageText}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <View style={styles.inputContainer}>
+        <TouchableOpacity 
+          style={styles.imageButton} 
+          onPress={async () => {
+            const image = await pickImageForMessage();
+            if (image) {
+              setSelectedImage(image);
+            }
+          }}
+          disabled={isUploadingImage}
+        >
+          <Text style={styles.imageButtonText}>📷</Text>
+        </TouchableOpacity>
+        
         <TextInput
           style={styles.input}
           value={inputText}
@@ -521,13 +649,44 @@ export default function ChatScreen() {
           placeholder="Type a message..."
           multiline
           maxLength={1000}
+          editable={!isUploadingImage}
         />
         <TouchableOpacity
-          style={[styles.sendButton, !inputText.trim() && styles.sendButtonDisabled]}
-          onPress={handleSend}
-          disabled={!inputText.trim()}
+          style={[styles.sendButton, (!inputText.trim() && !selectedImage) && styles.sendButtonDisabled]}
+          onPress={async () => {
+            if (selectedImage) {
+              setIsUploadingImage(true);
+              try {
+                const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const { downloadURL, width, height } = await uploadMessageImage(
+                  selectedImage.uri,
+                  id,
+                  messageId
+                );
+                
+                // Send message with image
+                await sendMessage(id, inputText.trim() || '', user.uid, {
+                  imageURL: downloadURL,
+                  imageWidth: width,
+                  imageHeight: height,
+                });
+                
+                setInputText('');
+                setSelectedImage(null);
+              } catch (error) {
+                Alert.alert('Error', 'Failed to send image: ' + error.message);
+              } finally {
+                setIsUploadingImage(false);
+              }
+            } else {
+              handleSend();
+            }
+          }}
+          disabled={(!inputText.trim() && !selectedImage) || isUploadingImage}
         >
-          <Text style={styles.sendButtonText}>Send</Text>
+          <Text style={styles.sendButtonText}>
+            {isUploadingImage ? '...' : 'Send'}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -552,11 +711,12 @@ export default function ChatScreen() {
               keyExtractor={([uid]) => uid}
               renderItem={({ item: [uid, userData] }) => (
                 <View style={styles.memberItem}>
-                  <View style={styles.memberAvatar}>
-                    <Text style={styles.memberAvatarText}>
-                      {userData.displayName?.[0]?.toUpperCase() || '?'}
-                    </Text>
-                  </View>
+                  <Avatar
+                    photoURL={userData.photoURL}
+                    displayName={userData.displayName}
+                    userId={uid}
+                    size={45}
+                  />
                   <View style={styles.memberInfo}>
                     <Text style={styles.memberName}>
                       {userData.displayName || 'Unknown'}
@@ -576,6 +736,41 @@ export default function ChatScreen() {
               )}
               style={styles.memberList}
             />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit Group Name Modal */}
+      <Modal
+        visible={showEditGroupNameModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowEditGroupNameModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Group Name</Text>
+              <TouchableOpacity onPress={() => setShowEditGroupNameModal(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            
+            <TextInput
+              style={styles.groupNameInput}
+              value={editingGroupName}
+              onChangeText={setEditingGroupName}
+              placeholder="Group name"
+              autoFocus
+              maxLength={50}
+            />
+            
+            <TouchableOpacity
+              style={styles.saveGroupNameButton}
+              onPress={handleSaveGroupName}
+            >
+              <Text style={styles.saveGroupNameButtonText}>Save</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -670,8 +865,24 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 24,
   },
+  headerAvatar: {
+    marginRight: 10,
+  },
+  placeholderAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
   headerInfo: {
     flex: 1,
+    marginLeft: 10,
   },
   headerName: {
     color: '#fff',
@@ -759,12 +970,47 @@ const styles = StyleSheet.create({
   failedMessageStatus: {
     fontWeight: 'bold',
   },
+  imagePreview: {
+    padding: 10,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#ddd',
+  },
+  previewImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 8,
+  },
+  removeImage: {
+    position: 'absolute',
+    top: 15,
+    right: 15,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  removeImageText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
   inputContainer: {
     flexDirection: 'row',
     padding: 10,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#ddd',
+    alignItems: 'center',
+  },
+  imageButton: {
+    padding: 10,
+    marginRight: 5,
+  },
+  imageButtonText: {
+    fontSize: 24,
   },
   input: {
     flex: 1,
@@ -973,5 +1219,25 @@ const styles = StyleSheet.create({
     color: '#2E7D32',
     fontSize: 12,
     textAlign: 'right',
+  },
+  groupNameInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    marginBottom: 20,
+    marginTop: 10,
+  },
+  saveGroupNameButton: {
+    backgroundColor: '#075E54',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  saveGroupNameButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

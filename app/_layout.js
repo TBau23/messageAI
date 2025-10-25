@@ -48,7 +48,6 @@ export default function RootLayout() {
         const conversationId = response.notification.request.content.data?.conversationId;
         
         if (conversationId) {
-          console.log('📱 Notification tapped, navigating to chat:', conversationId);
           // Use setTimeout to ensure navigation happens after any pending navigations
           setTimeout(() => {
             router.push(`/chat/${conversationId}`);
@@ -70,7 +69,6 @@ export default function RootLayout() {
     
     // Listen to app state changes (active, background, inactive)
     const subscription = AppState.addEventListener('change', nextAppState => {
-      console.log('AppState changed:', appState.current, '->', nextAppState);
       
       if (user) {
         // App going to background or inactive
@@ -78,7 +76,6 @@ export default function RootLayout() {
           appState.current.match(/active/) &&
           nextAppState.match(/inactive|background/)
         ) {
-          console.log('App backgrounded - setting user offline');
           setUserOnlineStatus(false);
         }
         
@@ -87,7 +84,6 @@ export default function RootLayout() {
           appState.current.match(/inactive|background/) &&
           nextAppState === 'active'
         ) {
-          console.log('App foregrounded - setting user online');
           setUserOnlineStatus(true);
           
           // Update badge count when app comes to foreground

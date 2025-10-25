@@ -18,7 +18,9 @@
 
 ### Backend
 - **Database**: Cloud Firestore (NoSQL document database)
+- **Local Cache**: Expo SQLite for offline-first message/conversation persistence
 - **Authentication**: Firebase Auth (email/password)
+- **Storage**: Firebase Storage for images (profile photos, message attachments)
 - **Real-time Sync**: Firestore onSnapshot listeners
 - **Persistence**: AsyncStorage for auth state
 
@@ -42,6 +44,8 @@ users/{userId}
   - online: boolean
   - lastSeen: timestamp
   - createdAt: timestamp
+  - photoURL: string (optional, Phase 3 - profile photo from Firebase Storage)
+  - pushToken: string (optional, Phase 2 - for push notifications)
 ```
 
 #### `conversations/` Collection
@@ -49,13 +53,14 @@ users/{userId}
 conversations/{conversationId}
   - participants: array<userId>
   - type: "direct" | "group"
-  - name: string (group chats only)
+  - name: string (group chats only, editable by any member)
   - createdAt: timestamp
   - updatedAt: timestamp
   - lastMessage: {
       text: string
       senderId: string
       timestamp: timestamp
+      readBy: array<userId>  // CRITICAL: Added in Phase 3 for unread indicators
     }
 
   messages/ (subcollection)
@@ -70,12 +75,17 @@ conversations/{conversationId}
       - readBy: array<userId>
       - deliveredReceipts: map<userId, timestamp>
       - readReceipts: map<userId, timestamp>
+      - imageURL: string (optional, Phase 3)
+      - imageWidth: number (optional, Phase 3)
+      - imageHeight: number (optional, Phase 3)
 
   typingStatus/ (subcollection)
     {userId}
       - typing: boolean
       - updatedAt: timestamp
 ```
+
+**⚠️ Known Issue**: Messages may be bleeding between conversations (see CRITICAL_BUGS.md)
 
 ---
 
@@ -427,15 +437,22 @@ app/
 
 ## 12. CURRENT LIMITATIONS & GAPS
 
-1. **No Image/Media Support**: Text-only messages
-2. **No Push Notifications**: Only in-app foreground notifications
-4. **No User Profile Pictures**: Avatar initials only
-5. **Security Rules**: Open database (dev only)
-6. **No Message Search**: Can't search within conversations
-7. **No Conversation Deletion**: Conversations persist forever
-8. **No User Blocking**: No spam protection
-9. **No Emoji Reactions**: Basic message bubbles only
-10. **No Voice/Video Calling**: Text chat only
+### 🔴 CRITICAL ISSUES (See CRITICAL_BUGS.md)
+1. **Message Cross-Contamination**: Messages from one conversation appearing in another
+2. **React Re-render Storm**: Thousands of logs/re-renders when sending group chat messages
+3. **Read Receipt Flickering**: Group chat read receipts update slowly/flicker
+
+### Known Issues
+1. **No Push Notifications**: Only in-app foreground notifications work reliably
+2. **No User Profile Pictures in New Chat**: Search results show initials only (FIXED in phase 3)
+3. **Security Rules**: Open database (dev only - expires Nov 19, 2025)
+4. **No Message Search**: Can't search within conversations
+5. **No Conversation Deletion**: Conversations persist forever
+6. **No User Blocking**: No spam protection
+7. **No Emoji Reactions**: Basic message bubbles only
+8. **No Voice/Video Calling**: Text chat only
+9. **No Message Pagination**: Loads ALL messages (performance issue for long conversations)
+10. **Unread Indicator Issues**: Green dot may not disappear correctly after reading (in testing)
 
 ---
 
@@ -447,32 +464,86 @@ app/
 - Message subscription: Initial read of all messages
 - Real-time: Charged per document change
 
+### ⚠️ Current Performance Issues
+1. **No Message Pagination**: Loads entire conversation history on open
+   - Impact: Slow load times for long conversations
+   - Impact: High Firestore read costs
+   - Recommendation: Implement pagination (load last 50, fetch more on scroll)
+
+2. **Excessive Re-renders in Group Chats**: 
+   - Symptom: Thousands of console logs per message send
+   - Impact: UI lag, poor user experience
+   - Suspected cause: useEffect cascading or array mutations
+   - Status: UNDER INVESTIGATION (see CRITICAL_BUGS.md)
+
+3. **Participant Data Refetching**:
+   - Currently refetches on every mount
+   - Recommendation: Implement caching layer
+
+4. **SQLite Cache Performance**:
+   - Cache may be causing more issues than it solves
+   - Consideration: Evaluate if cache is necessary or causing problems
+
 ### Optimization Opportunities
 - Pagination for old messages (currently loads all)
-- Participant data caching (currently refetches on every mount)
+- Participant data caching (currently refetches on every mount)  
 - Lazy load conversation metadata
 - Implement message virtualization for long chats
+- Reduce Firestore listener re-subscriptions
+- Batch Firestore writes where possible
+- Consider removing SQLite cache if causing issues
 
 ---
 
 ## 14. TESTING & DEBUGGING
 
-- No testing required
+### Debug Logging
+Comprehensive logging added for read receipt debugging:
+- `📤 [SEND]` - Message send events
+- `📋 [CHAT LIST]` - Chat list render with unread status
+- `🔍 [READ CHECK]` - Read receipt evaluation
+- `👁️ [MARK AS READ]` - When messages marked as read
+- `👀 [FOCUS]` / `👋 [BLUR]` - Screen focus state changes
+- `⏸️ [SKIPPED]` - Read receipt skipped (screen not focused)
+
+⚠️ **Note**: Logging itself may be contributing to performance issues. Consider disabling for production.
 
 ### Available Debug Data
 - Message latency metrics in `messageMetrics` store
 - Network state exposed via `useNetworkStore`
 - `__DEV__` checks for development logging
+- Read receipt flow extensively logged
+
+### Known Debugging Challenges
+1. **Log volume**: Thousands of logs in group chats make debugging difficult
+2. **Message cross-contamination**: Hard to trace which conversation messages belong to
+3. **React re-renders**: No visibility into why/when components re-render (need React DevTools)
+
+### Recommended Debugging Tools
+- React DevTools Profiler (to identify re-render hotspots)
+- Firestore Console (to verify data structure)
+- Chrome DevTools Performance tab
+- React Native Debugger
 
 ---
 
 ## SUMMARY
 
-
+**Last Updated**: October 25, 2025
 
 **Architecture Strengths**:
 - Clean separation of concerns (stores, components, screens)
 - Real-time sync with Firestore
 - Good UX with optimistic updates
 - Scalable data model (subcollections)
+- Offline-first with SQLite cache (Phase 1)
+- Push notifications support (Phase 2)
+- Media support with Firebase Storage (Phase 3)
+
+**Current Blockers**:
+- 🔴 Message cross-contamination between conversations
+- 🔴 Excessive re-renders in group chats
+- 🔴 Read receipt implementation needs overhaul
+
+**See CRITICAL_BUGS.md for detailed bug tracking and resolution plan**
 

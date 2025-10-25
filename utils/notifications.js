@@ -30,7 +30,6 @@ export async function registerForPushNotifications() {
 
   // Only works on physical devices
   if (!Device.isDevice) {
-    console.log('Push notifications require a physical device');
     return null;
   }
 
@@ -47,19 +46,16 @@ export async function registerForPushNotifications() {
 
     // Handle permission denied
     if (finalStatus !== 'granted') {
-      console.log('Push notification permission denied');
       return null;
     }
 
     // Get the Expo push token with project ID
     const projectId = Constants.expoConfig?.extra?.eas?.projectId;
     if (!projectId) {
-      console.error('No projectId found in app.json. Please add it to extra.eas.projectId');
       return null;
     }
 
     token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
-    console.log('✅ Expo push token obtained:', token);
 
     // Configure notification channel for Android
     if (Platform.OS === 'android') {
@@ -92,13 +88,11 @@ export async function registerForPushNotifications() {
  */
 export async function sendPushNotification(expoPushToken, notification) {
   if (!expoPushToken) {
-    console.log('No push token provided, skipping push notification');
     return false;
   }
 
   // Validate Expo push token format
   if (!expoPushToken.startsWith('ExponentPushToken[')) {
-    console.log('Invalid Expo push token format:', expoPushToken);
     return false;
   }
 
@@ -131,7 +125,6 @@ export async function sendPushNotification(expoPushToken, notification) {
       return false;
     }
 
-    console.log('✅ Push notification sent successfully');
     return true;
   } catch (error) {
     console.error('Error sending push notification:', error);

@@ -22,13 +22,13 @@ export default function App() {
 
   const testFirebase = async () => {
     try {
-      console.log('Starting Firebase test...');
+
       setFirebaseStatus('Writing to Firebase...');
       const docRef = await addDoc(collection(db, 'test'), {
         message: 'Hello from React Native!',
         timestamp: new Date()
       });
-      console.log('Document written with ID:', docRef.id);
+
       setFirebaseStatus('✅ Data written to Firestore!');
     } catch (error) {
       console.error('Firebase error:', error);

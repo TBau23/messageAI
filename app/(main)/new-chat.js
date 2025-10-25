@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/authStore';
 import { useChatStore } from '../../store/chatStore';
+import Avatar from '../../components/Avatar';
 
 export default function NewChatScreen() {
   const router = useRouter();
@@ -92,11 +93,12 @@ export default function NewChatScreen() {
         <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
           {isSelected && <Text style={styles.checkmark}>✓</Text>}
         </View>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>
-            {item.displayName?.[0]?.toUpperCase() || '?'}
-          </Text>
-        </View>
+        <Avatar
+          photoURL={item.photoURL}
+          displayName={item.displayName}
+          userId={item.uid}
+          size={50}
+        />
         <View style={styles.userInfo}>
           <Text style={styles.userName}>{item.displayName || 'Unknown User'}</Text>
           <Text style={styles.userEmail}>{item.email}</Text>

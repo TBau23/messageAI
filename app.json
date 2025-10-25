@@ -36,6 +36,13 @@
           "icon": "./assets/icon.png",
           "color": "#ffffff"
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow MessageAI to access your photos to set profile pictures and send images.",
+          "cameraPermission": "Allow MessageAI to access your camera to take photos."
+        }
       ]
     ],
     "extra": {
