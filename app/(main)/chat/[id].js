@@ -49,6 +49,9 @@ export default function ChatScreen() {
   const [showTranslationSettings, setShowTranslationSettings] = useState(false);
   const [targetLanguage, setTargetLanguage] = useState('es');
   const [formality, setFormality] = useState('neutral');
+  const [translationPreview, setTranslationPreview] = useState(null);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translationError, setTranslationError] = useState(null);
   
   const flatListRef = useRef(null);
   const participantSubscriptionsRef = useRef({});
@@ -57,6 +60,7 @@ export default function ChatScreen() {
   const lastTypingSignalRef = useRef(0);
   const retryingMessagesRef = useRef(new Set());
   const isFocusedRef = useRef(false);
+  const translationTimeoutRef = useRef(null);
 
   const toDisplayDate = useCallback((value) => {
     if (!value) return null;
@@ -174,6 +178,51 @@ export default function ChatScreen() {
       typingActiveRef.current = false;
       updateTypingStatus(false);
     }, 2000);
+
+    // Handle translation preview
+    if (translationEnabled && text.trim()) {
+      // Clear any existing translation timeout
+      if (translationTimeoutRef.current) {
+        clearTimeout(translationTimeoutRef.current);
+      }
+
+      // Clear previous preview and error while typing
+      setTranslationPreview(null);
+      setTranslationError(null);
+
+      // Debounce translation by 1 second
+      translationTimeoutRef.current = setTimeout(async () => {
+        try {
+          setIsTranslating(true);
+          setTranslationError(null);
+          
+          const translateText = httpsCallable(functions, 'translateText');
+          const result = await translateText({
+            text: text.trim(),
+            targetLanguage,
+            formality
+          });
+
+          console.log('[Translation Preview]', result.data.metadata.responseTime + 'ms', 
+                      'Cached:', result.data.cached);
+
+          setTranslationPreview(result.data.translatedText);
+        } catch (error) {
+          console.error('[Translation Preview] Error:', error);
+          setTranslationError(error.message);
+        } finally {
+          setIsTranslating(false);
+        }
+      }, 1000); // 1 second debounce
+    } else {
+      // Clear preview if translation is disabled or text is empty
+      if (translationTimeoutRef.current) {
+        clearTimeout(translationTimeoutRef.current);
+      }
+      setTranslationPreview(null);
+      setTranslationError(null);
+      setIsTranslating(false);
+    }
   };
 
   useEffect(() => {
@@ -666,15 +715,44 @@ export default function ChatScreen() {
           <Text style={styles.translationButtonText}>🌐</Text>
         </TouchableOpacity>
         
-        <TextInput
-          style={styles.input}
-          value={inputText}
-          onChangeText={handleTextChange}
-          placeholder="Type a message..."
-          multiline
-          maxLength={1000}
-          editable={!isUploadingImage}
-        />
+        <View style={styles.inputWrapper}>
+          <TextInput
+            style={styles.input}
+            value={inputText}
+            onChangeText={handleTextChange}
+            placeholder="Type a message..."
+            multiline
+            maxLength={1000}
+            editable={!isUploadingImage}
+          />
+          
+          {/* Translation Preview */}
+          {translationEnabled && (isTranslating || translationPreview || translationError) && (
+            <View style={styles.translationPreviewContainer}>
+              {isTranslating && (
+                <Text style={styles.translationPreviewLoading}>
+                  🔄 Translating...
+                </Text>
+              )}
+              {translationPreview && !isTranslating && (
+                <View style={styles.translationPreviewContent}>
+                  <Text style={styles.translationPreviewLabel}>
+                    Translation → {targetLanguage.toUpperCase()}:
+                  </Text>
+                  <Text style={styles.translationPreviewText}>
+                    {translationPreview}
+                  </Text>
+                </View>
+              )}
+              {translationError && !isTranslating && (
+                <Text style={styles.translationPreviewError}>
+                  ⚠️ {translationError}
+                </Text>
+              )}
+            </View>
+          )}
+        </View>
+
         <TouchableOpacity
           style={[styles.sendButton, (!inputText.trim() && !selectedImage) && styles.sendButtonDisabled]}
           onPress={async () => {
@@ -1149,12 +1227,10 @@ const styles = StyleSheet.create({
     fontSize: 24,
   },
   input: {
-    flex: 1,
     backgroundColor: '#f5f5f5',
     borderRadius: 20,
     paddingHorizontal: 15,
     paddingVertical: 10,
-    marginRight: 10,
     maxHeight: 100,
     fontSize: 16,
   },
@@ -1549,5 +1625,43 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  // Translation Preview styles
+  inputWrapper: {
+    flex: 1,
+    marginRight: 8,
+  },
+  translationPreviewContainer: {
+    backgroundColor: '#f0f8ff',
+    borderRadius: 8,
+    padding: 8,
+    marginTop: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: '#075E54',
+  },
+  translationPreviewLoading: {
+    fontSize: 13,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  translationPreviewContent: {
+    gap: 2,
+  },
+  translationPreviewLabel: {
+    fontSize: 11,
+    color: '#075E54',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  translationPreviewText: {
+    fontSize: 14,
+    color: '#333',
+    fontStyle: 'italic',
+    lineHeight: 18,
+  },
+  translationPreviewError: {
+    fontSize: 13,
+    color: '#d32f2f',
+    fontStyle: 'italic',
   },
 });
