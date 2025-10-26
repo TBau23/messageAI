@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../store/authStore';
 import { useChatStore } from '../../../store/chatStore';
 import { useNotificationStore } from '../../../store/notificationStore';
+import { useNetworkStore } from '../../../utils/networkMonitor';
 import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, functions } from '../../../firebaseConfig';
 import { httpsCallable } from 'firebase/functions';
@@ -33,6 +34,7 @@ export default function ChatScreen() {
   const { user } = useAuthStore();
   const { messages, subscribeToMessages, sendMessage, clearMessages, retryMessage } = useChatStore();
   const { setCurrentChatId } = useNotificationStore();
+  const { isOnline } = useNetworkStore();
   const [inputText, setInputText] = useState('');
   const [conversationData, setConversationData] = useState(null);
   const [participantMap, setParticipantMap] = useState({});
@@ -52,6 +54,14 @@ export default function ChatScreen() {
   const [translationPreview, setTranslationPreview] = useState(null);
   const [isTranslating, setIsTranslating] = useState(false);
   const [translationError, setTranslationError] = useState(null);
+  
+  // Language detection for received messages
+  const [messageLanguages, setMessageLanguages] = useState({}); // messageId -> language code
+  const [userPreferredLanguage, setUserPreferredLanguage] = useState('en');
+  
+  // Translation state for received messages
+  const [translatedMessages, setTranslatedMessages] = useState({}); // messageId -> { text, isVisible, isLoading }
+  const [translatingMessageId, setTranslatingMessageId] = useState(null);
   
   const flatListRef = useRef(null);
   const participantSubscriptionsRef = useRef({});
@@ -180,7 +190,7 @@ export default function ChatScreen() {
     }, 2000);
 
     // Handle translation preview
-    if (translationEnabled && text.trim()) {
+    if (translationEnabled && text.trim() && isOnline) {
       // Clear any existing translation timeout
       if (translationTimeoutRef.current) {
         clearTimeout(translationTimeoutRef.current);
@@ -215,7 +225,7 @@ export default function ChatScreen() {
         }
       }, 1000); // 1 second debounce
     } else {
-      // Clear preview if translation is disabled or text is empty
+      // Clear preview if translation is disabled, text is empty, or offline
       if (translationTimeoutRef.current) {
         clearTimeout(translationTimeoutRef.current);
       }
@@ -277,6 +287,9 @@ export default function ChatScreen() {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
+      if (translationTimeoutRef.current) {
+        clearTimeout(translationTimeoutRef.current);
+      }
       updateTypingStatus(false);
       typingActiveRef.current = false;
       lastTypingSignalRef.current = 0;
@@ -301,6 +314,49 @@ export default function ChatScreen() {
       }, 100);
     }
   }, [messages]);
+
+  // Load user's preferred language on mount
+  useEffect(() => {
+    const loadUserLanguagePreference = async () => {
+      try {
+        const getUserSettings = httpsCallable(functions, 'getUserSettings');
+        const result = await getUserSettings();
+        
+        if (result.data.success && result.data.settings?.defaultLanguage) {
+          setUserPreferredLanguage(result.data.settings.defaultLanguage);
+          console.log('[Chat] User preferred language:', result.data.settings.defaultLanguage);
+        }
+      } catch (error) {
+        console.error('[Chat] Error loading language preference:', error);
+        // Fail silently, keep default 'en'
+      }
+    };
+
+    if (user?.uid) {
+      loadUserLanguagePreference();
+    }
+  }, [user?.uid]);
+
+  // Handle offline state - disable translation features
+  useEffect(() => {
+    if (!isOnline) {
+      // Clear translation preview when going offline
+      setTranslationPreview(null);
+      setTranslationError(null);
+      setIsTranslating(false);
+      
+      // Disable translation toggle when offline
+      if (translationEnabled) {
+        setTranslationEnabled(false);
+        console.log('[Chat] Translation disabled - offline');
+      }
+      
+      // Clear any pending translation timeout
+      if (translationTimeoutRef.current) {
+        clearTimeout(translationTimeoutRef.current);
+      }
+    }
+  }, [isOnline, translationEnabled]);
 
   // Track when screen is focused
   useFocusEffect(
@@ -342,6 +398,48 @@ export default function ChatScreen() {
     }
   }, [id, messages, user]);
 
+  // Detect language for received messages
+  useEffect(() => {
+    if (!user || messages.length === 0) return;
+
+    const detectLanguageForMessages = async () => {
+      const detectMessageLanguage = httpsCallable(functions, 'detectMessageLanguage');
+      
+      // Find messages from other users that don't have language detected yet
+      const messagesToDetect = messages.filter(msg => 
+        msg.senderId !== user.uid && 
+        msg.text && 
+        msg.text.trim().length >= 10 &&
+        !messageLanguages[msg.id]
+      );
+
+      // Detect language for each message (in parallel)
+      const detectionPromises = messagesToDetect.map(async (msg) => {
+        try {
+          const result = await detectMessageLanguage({ text: msg.text });
+          return { messageId: msg.id, language: result.data.language };
+        } catch (error) {
+          console.error(`[Language Detection] Failed for message ${msg.id}:`, error);
+          return { messageId: msg.id, language: 'en' }; // Fallback to English
+        }
+      });
+
+      const results = await Promise.all(detectionPromises);
+      
+      // Update state with detected languages
+      if (results.length > 0) {
+        const newLanguages = {};
+        results.forEach(({ messageId, language }) => {
+          newLanguages[messageId] = language;
+        });
+        
+        setMessageLanguages(prev => ({ ...prev, ...newLanguages }));
+      }
+    };
+
+    detectLanguageForMessages();
+  }, [messages, user, messageLanguages]);
+
   const handleSend = async () => {
     if (!inputText.trim()) return;
 
@@ -354,8 +452,21 @@ export default function ChatScreen() {
     updateTypingStatus(false);
     lastTypingSignalRef.current = 0;
 
-    const messageText = inputText.trim();
+    // Clear any pending translation timeout
+    if (translationTimeoutRef.current) {
+      clearTimeout(translationTimeoutRef.current);
+    }
+
+    // Use translated text if translation is enabled and preview exists
+    const messageText = translationEnabled && translationPreview 
+      ? translationPreview 
+      : inputText.trim();
+
+    // Clear input and translation state
     setInputText('');
+    setTranslationPreview(null);
+    setTranslationError(null);
+    setIsTranslating(false);
 
     const result = await sendMessage(id, messageText, user.uid);
 
@@ -377,6 +488,53 @@ export default function ChatScreen() {
     }
 
     retryingMessagesRef.current.delete(message.localId);
+  };
+
+  const handleTranslateMessage = async (message) => {
+    const messageId = message.id;
+    
+    // If translation already exists, toggle visibility
+    if (translatedMessages[messageId]) {
+      setTranslatedMessages(prev => ({
+        ...prev,
+        [messageId]: {
+          ...prev[messageId],
+          isVisible: !prev[messageId].isVisible
+        }
+      }));
+      return;
+    }
+
+    // Start translation
+    setTranslatingMessageId(messageId);
+    
+    try {
+      const translateText = httpsCallable(functions, 'translateText');
+      const result = await translateText({
+        text: message.text,
+        targetLanguage: userPreferredLanguage,
+        formality: 'neutral'
+      });
+
+      console.log('[Message Translation]', result.data.metadata.responseTime + 'ms', 
+                  'Cached:', result.data.cached);
+
+      // Store translated text
+      setTranslatedMessages(prev => ({
+        ...prev,
+        [messageId]: {
+          text: result.data.translatedText,
+          isVisible: true,
+          sourceLanguage: result.data.sourceLanguage,
+          cached: result.data.cached
+        }
+      }));
+    } catch (error) {
+      console.error('[Message Translation] Error:', error);
+      Alert.alert('Translation Failed', error.message || 'Unable to translate message');
+    } finally {
+      setTranslatingMessageId(null);
+    }
   };
 
   const handleEditGroupName = () => {
@@ -464,6 +622,20 @@ export default function ChatScreen() {
     
     // Only show read receipt on the most recently read message
     const shouldShowReadReceipt = isMyMessage && !isFailed && item.id === lastReadMessageId;
+    
+    // Check if message needs translation button
+    const messageLanguage = messageLanguages[item.id];
+    const shouldShowTranslateButton = !isMyMessage && 
+                                       messageLanguage && 
+                                       messageLanguage !== userPreferredLanguage &&
+                                       item.text &&
+                                       item.text.trim().length >= 10 &&
+                                       isOnline; // Only show when online
+    
+    // Get translation state for this message
+    const translation = translatedMessages[item.id];
+    const isTranslating = translatingMessageId === item.id;
+    const showTranslation = translation?.isVisible;
 
     return (
       <View
@@ -500,13 +672,28 @@ export default function ChatScreen() {
           
           {/* Show text if exists */}
           {item.text && (
-            <Text style={[
-              styles.messageText,
-              isMyMessage ? styles.myMessageText : styles.otherMessageText,
-              isMyMessage && isFailed && styles.failedMessageText
-            ]}>
-              {item.text}
-            </Text>
+            <>
+              <Text style={[
+                styles.messageText,
+                isMyMessage ? styles.myMessageText : styles.otherMessageText,
+                isMyMessage && isFailed && styles.failedMessageText,
+                showTranslation && styles.originalTextDimmed
+              ]}>
+                {item.text}
+              </Text>
+              
+              {/* Show translated text if available and visible */}
+              {showTranslation && translation?.text && (
+                <View style={styles.translatedTextContainer}>
+                  <Text style={styles.translatedTextLabel}>
+                    Translation:
+                  </Text>
+                  <Text style={styles.translatedText}>
+                    {translation.text}
+                  </Text>
+                </View>
+              )}
+            </>
           )}
           <View style={styles.messageFooter}>
             <Text style={[
@@ -525,6 +712,29 @@ export default function ChatScreen() {
             </TouchableOpacity>
           )}
         </View>
+        
+        {/* Translate button for foreign language messages */}
+        {shouldShowTranslateButton && (
+          <TouchableOpacity
+            style={[
+              styles.translateButton,
+              showTranslation && styles.translateButtonActive
+            ]}
+            onPress={() => handleTranslateMessage(item)}
+            disabled={isTranslating}
+          >
+            <Text style={[
+              styles.translateButtonText,
+              showTranslation && styles.translateButtonTextActive
+            ]}>
+              {isTranslating 
+                ? '⏳ Translating...' 
+                : showTranslation 
+                  ? '📄 Show Original' 
+                  : '🌐 Translate'}
+            </Text>
+          </TouchableOpacity>
+        )}
         {shouldShowReadReceipt && (
           <MessageStatusIndicator
             message={item}
@@ -700,8 +910,16 @@ export default function ChatScreen() {
         </TouchableOpacity>
 
         <TouchableOpacity 
-          style={[styles.translationButton, translationEnabled && styles.translationButtonActive]} 
+          style={[
+            styles.translationButton, 
+            translationEnabled && styles.translationButtonActive,
+            !isOnline && styles.translationButtonDisabled
+          ]} 
           onPress={() => {
+            if (!isOnline) {
+              Alert.alert('Offline', 'Translation is unavailable while offline');
+              return;
+            }
             if (translationEnabled) {
               // If already enabled, toggle settings
               setShowTranslationSettings(!showTranslationSettings);
@@ -711,8 +929,12 @@ export default function ChatScreen() {
               setShowTranslationSettings(true);
             }
           }}
+          disabled={!isOnline}
         >
-          <Text style={styles.translationButtonText}>🌐</Text>
+          <Text style={[
+            styles.translationButtonText,
+            !isOnline && styles.translationButtonTextDisabled
+          ]}>🌐</Text>
         </TouchableOpacity>
         
         <View style={styles.inputWrapper}>
@@ -1493,8 +1715,15 @@ const styles = StyleSheet.create({
   translationButtonActive: {
     backgroundColor: '#075E54',
   },
+  translationButtonDisabled: {
+    backgroundColor: '#e0e0e0',
+    opacity: 0.5,
+  },
   translationButtonText: {
     fontSize: 20,
+  },
+  translationButtonTextDisabled: {
+    opacity: 0.5,
   },
   translationSettingsModal: {
     width: '100%',
@@ -1663,5 +1892,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#d32f2f',
     fontStyle: 'italic',
+  },
+  // Translate button for received messages
+  translateButton: {
+    marginTop: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#075E54',
+    alignSelf: 'flex-start',
+  },
+  translateButtonActive: {
+    backgroundColor: '#075E54',
+  },
+  translateButtonText: {
+    color: '#075E54',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  translateButtonTextActive: {
+    color: '#fff',
+  },
+  // Translated text styles
+  originalTextDimmed: {
+    opacity: 0.6,
+  },
+  translatedTextContainer: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.1)',
+  },
+  translatedTextLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#075E54',
+    marginBottom: 4,
+    textTransform: 'uppercase',
+  },
+  translatedText: {
+    fontSize: 16,
+    color: '#000',
+    lineHeight: 22,
   },
 });

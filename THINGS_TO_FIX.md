@@ -3,6 +3,7 @@
 -- add and remove people from group chat once created
 -- user profile page
 -- in app push notifications dont send everytime?
+-- do we need streaming?
 
 2. List Performance Warning
 VirtualizedList: You have a large list that is slow to update

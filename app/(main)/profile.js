@@ -8,7 +8,7 @@ import {
   ScrollView,
   ActivityIndicator
 } from 'react-native';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../store/authStore';
@@ -28,9 +28,60 @@ export default function ProfileScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isTestingAI, setIsTestingAI] = useState(false);
+  
+  // Language preferences
+  const [preferredLanguage, setPreferredLanguage] = useState('en');
+  const [isEditingLanguage, setIsEditingLanguage] = useState(false);
+  const [isSavingLanguage, setIsSavingLanguage] = useState(false);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
 
   const handleBack = () => {
     router.push('/');
+  };
+
+  // Load user settings on mount
+  useEffect(() => {
+    const loadUserSettings = async () => {
+      try {
+        const getUserSettings = httpsCallable(functions, 'getUserSettings');
+        const result = await getUserSettings();
+        
+        if (result.data.success && result.data.settings) {
+          setPreferredLanguage(result.data.settings.defaultLanguage || 'en');
+        }
+      } catch (error) {
+        console.error('Error loading user settings:', error);
+        // Fail silently, use default 'en'
+      } finally {
+        setIsLoadingSettings(false);
+      }
+    };
+
+    if (user?.uid) {
+      loadUserSettings();
+    }
+  }, [user?.uid]);
+
+  const handleSaveLanguage = async (languageCode) => {
+    try {
+      setIsSavingLanguage(true);
+      
+      const updateUserSettings = httpsCallable(functions, 'updateUserSettings');
+      const result = await updateUserSettings({ 
+        defaultLanguage: languageCode 
+      });
+
+      if (result.data.success) {
+        setPreferredLanguage(languageCode);
+        setIsEditingLanguage(false);
+        Alert.alert('Success', 'Preferred language updated!');
+      }
+    } catch (error) {
+      console.error('Error updating language:', error);
+      Alert.alert('Error', 'Failed to update language: ' + error.message);
+    } finally {
+      setIsSavingLanguage(false);
+    }
   };
 
   const handleSignOut = () => {
@@ -310,6 +361,81 @@ export default function ProfileScreen() {
           <Text style={styles.value}>{formatMemberSince()}</Text>
         </View>
 
+        {/* Preferred Language Section */}
+        <View style={styles.section}>
+          <Text style={styles.label}>Preferred Language</Text>
+          <Text style={styles.sectionDescription}>
+            Used for automatic message translation detection
+          </Text>
+          
+          {isEditingLanguage ? (
+            <View style={styles.languageSelector}>
+              {[
+                { code: 'en', name: 'English', flag: '🇬🇧' },
+                { code: 'es', name: 'Spanish', flag: '🇪🇸' },
+                { code: 'fr', name: 'French', flag: '🇫🇷' },
+                { code: 'zh', name: 'Chinese', flag: '🇨🇳' },
+                { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
+                { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
+              ].map((lang) => (
+                <TouchableOpacity
+                  key={lang.code}
+                  style={[
+                    styles.languageOption,
+                    preferredLanguage === lang.code && styles.languageOptionSelected
+                  ]}
+                  onPress={() => handleSaveLanguage(lang.code)}
+                  disabled={isSavingLanguage}
+                >
+                  <Text style={styles.languageFlag}>{lang.flag}</Text>
+                  <Text style={[
+                    styles.languageName,
+                    preferredLanguage === lang.code && styles.languageNameSelected
+                  ]}>
+                    {lang.name}
+                  </Text>
+                  {preferredLanguage === lang.code && (
+                    <Text style={styles.checkmark}>✓</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+              
+              <TouchableOpacity
+                style={[styles.button, styles.cancelButton]}
+                onPress={() => setIsEditingLanguage(false)}
+                disabled={isSavingLanguage}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.valueContainer}
+              onPress={() => setIsEditingLanguage(true)}
+            >
+              {isLoadingSettings ? (
+                <ActivityIndicator size="small" color="#075E54" />
+              ) : (
+                <>
+                  <Text style={styles.value}>
+                    {
+                      {
+                        en: '🇬🇧 English',
+                        es: '🇪🇸 Spanish',
+                        fr: '🇫🇷 French',
+                        zh: '🇨🇳 Chinese',
+                        ja: '🇯🇵 Japanese',
+                        ar: '🇸🇦 Arabic',
+                      }[preferredLanguage] || 'English'
+                    }
+                  </Text>
+                  <Text style={styles.editIcon}>✏️</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
+
         {/* Actions */}
         <View style={styles.actionsSection}>
           {/* TEST AI BUTTON - Remove after Epic 1 testing */}
@@ -492,6 +618,49 @@ const styles = StyleSheet.create({
   },
   signOutButtonText: {
     color: '#c62828',
+  },
+  // Language preference styles
+  sectionDescription: {
+    fontSize: 13,
+    color: '#999',
+    marginBottom: 12,
+    lineHeight: 18,
+  },
+  languageSelector: {
+    gap: 10,
+    marginTop: 8,
+  },
+  languageOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  languageOptionSelected: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#075E54',
+  },
+  languageFlag: {
+    fontSize: 24,
+    marginRight: 12,
+  },
+  languageName: {
+    flex: 1,
+    fontSize: 16,
+    color: '#000',
+  },
+  languageNameSelected: {
+    fontWeight: '600',
+    color: '#075E54',
+  },
+  checkmark: {
+    fontSize: 18,
+    color: '#075E54',
+    fontWeight: 'bold',
   },
 });
 

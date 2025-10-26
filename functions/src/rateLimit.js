@@ -7,6 +7,7 @@ const LIMITS = {
   translations: 100,
   explanations: 50,
   extractions: 5,
+  detections: 1000, // Language detection is lightweight, allow high volume
 };
 
 /**
@@ -82,12 +83,14 @@ async function getUserUsage(uid) {
         translations: usage.translations || 0,
         explanations: usage.explanations || 0,
         extractions: usage.extractions || 0,
+        detections: usage.detections || 0,
       },
       limits: LIMITS,
       remaining: {
         translations: LIMITS.translations - (usage.translations || 0),
         explanations: LIMITS.explanations - (usage.explanations || 0),
         extractions: LIMITS.extractions - (usage.extractions || 0),
+        detections: LIMITS.detections - (usage.detections || 0),
       },
       date: today,
     };

@@ -20,6 +20,7 @@ const { testAI } = require('./src/testAI');
 const { updateUserSettings, getUserSettings } = require('./src/userSettings');
 const { getAIUsage } = require('./src/aiUsage');
 const { translateText } = require('./src/translate');
+const { detectMessageLanguage } = require('./src/detectLanguage');
 
 // Export functions
 exports.testAI = testAI;
@@ -27,3 +28,4 @@ exports.updateUserSettings = updateUserSettings;
 exports.getUserSettings = getUserSettings;
 exports.getAIUsage = getAIUsage;
 exports.translateText = translateText;
+exports.detectMessageLanguage = detectMessageLanguage;
