@@ -28,6 +28,7 @@ import { pickImageForMessage, uploadMessageImage } from '../../../utils/imageUti
 import { Image } from 'expo-image';
 import { updateDoc } from 'firebase/firestore';
 import { styles } from './[id].styles';
+import MessageBubble from '../../../components/chat/MessageBubble';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams();
@@ -766,150 +767,24 @@ export default function ChatScreen() {
   const renderMessage = ({ item }) => {
     if (!user) return null; // Guard against null user
     
-    const isMyMessage = item.senderId === user.uid;
-    const timestamp = item.timestamp?.toDate?.() || item.timestamp;
-    const timeString = timestamp 
-      ? format(timestamp, 'h:mm a')
-      : '';
-
-    const senderName = participantMap[item.senderId]?.displayName || 'Unknown';
-    const isGroup = conversationData?.type === 'group';
-
-    const isFailed = item.status === 'failed';
-    
-    // Only show read receipt on the most recently read message
-    const shouldShowReadReceipt = isMyMessage && !isFailed && item.id === lastReadMessageId;
-    
-    // Check if message needs translation button
-    const messageLanguage = messageLanguages[item.id];
-    const shouldShowTranslateButton = !isMyMessage && 
-                                       messageLanguage && 
-                                       messageLanguage !== userPreferredLanguage &&
-                                       item.text &&
-                                       item.text.trim().length >= 10 &&
-                                       isOnline; // Only show when online
-    
-    // Get translation state for this message
-    const translation = translatedMessages[item.id];
-    const isTranslating = translatingMessageId === item.id;
-    const showTranslation = translation?.isVisible;
-
     return (
-      <View
-        style={[
-          styles.messageContainer,
-          isMyMessage ? styles.myMessageContainer : styles.otherMessageContainer
-        ]}
-      >
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onLongPress={() => handleLongPressMessage(item)}
-          delayLongPress={500}
-          style={[
-            styles.messageBubble,
-            isMyMessage ? styles.myMessageBubble : styles.otherMessageBubble,
-            isMyMessage && isFailed && styles.failedMessageBubble
-          ]}
-        >
-          {/* Show sender name in group chats for other users' messages */}
-          {isGroup && !isMyMessage && (
-            <Text style={styles.senderName}>{senderName}</Text>
-          )}
-          
-          {/* Show image if exists */}
-          {item.imageURL && (
-            <Image
-              source={{ uri: item.imageURL }}
-              style={{
-                width: 200,
-                height: item.imageHeight ? (200 * item.imageHeight / item.imageWidth) : 200,
-                borderRadius: 8,
-                marginBottom: item.text ? 8 : 0,
-              }}
-              contentFit="cover"
-            />
-          )}
-          
-          {/* Show text if exists */}
-          {item.text && (
-            <>
-              <Text style={[
-                styles.messageText,
-                isMyMessage ? styles.myMessageText : styles.otherMessageText,
-                isMyMessage && isFailed && styles.failedMessageText,
-                showTranslation && styles.originalTextDimmed
-              ]}>
-                {item.text}
-              </Text>
-              
-              {/* Show translated text if available and visible */}
-              {showTranslation && translation?.text && (
-                <View style={styles.translatedTextContainer}>
-                  <Text style={styles.translatedTextLabel}>
-                    Translation:
-                  </Text>
-                  <Text style={styles.translatedText}>
-                    {translation.text}
-                  </Text>
-                </View>
-              )}
-            </>
-          )}
-          <View style={styles.messageFooter}>
-            <Text style={[
-              styles.messageTime,
-              isMyMessage ? styles.myMessageTime : styles.otherMessageTime
-            ]}>
-              {timeString}
-            </Text>
-          </View>
-          {isMyMessage && isFailed && (
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={() => handleRetry(item)}
-            >
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          )}
-        </TouchableOpacity>
-        
-        {/* Translate button for foreign language messages */}
-        {shouldShowTranslateButton && (
-          <TouchableOpacity
-            style={[
-              styles.translateButton,
-              showTranslation && styles.translateButtonActive
-            ]}
-            onPress={() => handleTranslateMessage(item)}
-            disabled={isTranslating}
-          >
-            <Text style={[
-              styles.translateButtonText,
-              showTranslation && styles.translateButtonTextActive
-            ]}>
-              {isTranslating 
-                ? '⏳ Translating...' 
-                : showTranslation 
-                  ? '📄 Show Original' 
-                  : '🌐 Translate'}
-            </Text>
-          </TouchableOpacity>
-        )}
-        {shouldShowReadReceipt && (
-          <MessageStatusIndicator
-            message={item}
-            isOwnMessage={isMyMessage}
-            conversationType={conversationData?.type}
-            participantMap={participantMap}
-            currentUserId={user.uid}
-            onPressDetails={
-              conversationData?.type === 'group'
-                ? () => setSelectedStatusMessage(item)
-                : undefined
-            }
-          />
-        )}
-      </View>
+      <MessageBubble
+        message={item}
+        currentUserId={user.uid}
+        participantMap={participantMap}
+        conversationType={conversationData?.type}
+        lastReadMessageId={lastReadMessageId}
+        messageLanguages={messageLanguages}
+        translatedMessages={translatedMessages}
+        translatingMessageId={translatingMessageId}
+        userPreferredLanguage={userPreferredLanguage}
+        isOnline={isOnline}
+        onLongPress={handleLongPressMessage}
+        onTranslate={handleTranslateMessage}
+        onRetry={handleRetry}
+        onPressStatusDetails={setSelectedStatusMessage}
+        styles={styles}
+      />
     );
   };
 

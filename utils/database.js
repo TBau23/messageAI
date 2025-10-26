@@ -15,7 +15,7 @@ class Database {
 
   async migrateSchema() {
     try {
-      // Migration: Add image fields to messages table (Phase 3)
+      // Migration 1: Add image fields to messages table (Phase 3)
       // Check if columns exist by trying to select them
       const testQuery = await this.db.getFirstAsync(
         'SELECT image_url FROM messages LIMIT 1'
@@ -32,6 +32,67 @@ class Database {
         `);
         
         console.log('✅ Database migration complete: Image support added');
+      }
+
+      // Migration 2: Fix NOT NULL constraint on text column for image-only messages
+      // We need to recreate the table because SQLite doesn't support ALTER COLUMN
+      console.log('🔄 Checking if messages table needs text column migration...');
+      
+      // Try inserting a test message with NULL text
+      const testId = 'test_null_text_' + Date.now();
+      try {
+        await this.db.runAsync(
+          `INSERT INTO messages (id, conversation_id, sender_id, text, timestamp, cached_at) 
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [testId, 'test', 'test', null, Date.now(), Date.now()]
+        );
+        
+        // Success - schema is already correct, clean up test
+        await this.db.runAsync('DELETE FROM messages WHERE id = ?', [testId]);
+        console.log('✅ Messages table already allows NULL text');
+      } catch (nullTestError) {
+        if (nullTestError.message.includes('NOT NULL')) {
+          console.log('🔄 Migrating messages table to allow NULL text for image-only messages...');
+          
+          // Recreate table with correct schema
+          await this.db.execAsync(`
+            -- Create new table with correct schema
+            CREATE TABLE IF NOT EXISTS messages_new (
+              id TEXT PRIMARY KEY,
+              conversation_id TEXT NOT NULL,
+              sender_id TEXT NOT NULL,
+              text TEXT,
+              timestamp INTEGER NOT NULL,
+              delivered_to TEXT,
+              read_by TEXT,
+              delivered_receipts TEXT,
+              read_receipts TEXT,
+              image_url TEXT,
+              image_width INTEGER,
+              image_height INTEGER,
+              cached_at INTEGER NOT NULL
+            );
+            
+            -- Copy data from old table
+            INSERT INTO messages_new 
+            SELECT id, conversation_id, sender_id, text, timestamp, 
+                   delivered_to, read_by, delivered_receipts, read_receipts,
+                   image_url, image_width, image_height, cached_at
+            FROM messages;
+            
+            -- Drop old table
+            DROP TABLE messages;
+            
+            -- Rename new table
+            ALTER TABLE messages_new RENAME TO messages;
+            
+            -- Recreate index
+            CREATE INDEX IF NOT EXISTS idx_messages_conversation 
+            ON messages(conversation_id, timestamp DESC);
+          `);
+          
+          console.log('✅ Database migration complete: text column now allows NULL');
+        }
       }
     } catch (error) {
       console.warn('Database migration check failed (this is OK for new databases):', error.message);
