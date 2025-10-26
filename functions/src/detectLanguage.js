@@ -1,23 +1,36 @@
-const {createAIFunction, validateRequest, validateTextLength} = require("./template");
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {detectLanguage, getLanguageName} = require("./languageDetect");
 
 /**
  * Detect the language of a message
- * Lightweight function with generous rate limiting (1000/day)
+ * Lightweight function with NO rate limiting (uses local library, not AI)
  */
-exports.detectMessageLanguage = createAIFunction("detections", async (request, context) => {
+exports.detectMessageLanguage = onCall({
+  timeoutSeconds: 10,
+  memory: "256MiB",
+}, async (request) => {
+  // Authentication check
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const uid = request.auth.uid;
+
   // Validate input
-  validateRequest(request.data, ["text"]);
-
   const {text} = request.data;
-  const {uid} = context;
+  if (!text || typeof text !== "string") {
+    throw new HttpsError("invalid-argument", "Missing required field: text");
+  }
 
-  // Validate text length (reasonable limit for language detection)
-  validateTextLength(text, 2000);
+  if (text.length > 2000) {
+    throw new HttpsError("invalid-argument",
+        `Text too long (${text.length} characters). Maximum: 2000`);
+  }
 
   // If text is too short, return English as default
-  if (!text || text.trim().length < 10) {
+  if (text.trim().length < 10) {
     return {
+      success: true,
       language: "en",
       languageName: "English",
       confidence: "low",
@@ -28,14 +41,17 @@ exports.detectMessageLanguage = createAIFunction("detections", async (request, c
   const startTime = Date.now();
 
   try {
-    // Detect language using franc-min
+    // Detect language using franc-min (local, no API cost)
     const detectedLanguage = await detectLanguage(text, "en");
     const languageName = getLanguageName(detectedLanguage);
     const responseTime = Date.now() - startTime;
 
-    console.log(`[detectMessageLanguage] User: ${uid}, Detected: ${detectedLanguage} (${languageName}), Time: ${responseTime}ms`);
+    console.log(`[detectMessageLanguage] User: ${uid}, ` +
+        `Detected: ${detectedLanguage} (${languageName}), ` +
+        `Time: ${responseTime}ms`);
 
     return {
+      success: true,
       language: detectedLanguage,
       languageName,
       confidence: "high",
@@ -48,6 +64,7 @@ exports.detectMessageLanguage = createAIFunction("detections", async (request, c
     console.error("[detectMessageLanguage] Error:", error);
     // Fallback to English on error
     return {
+      success: true,
       language: "en",
       languageName: "English",
       confidence: "low",
@@ -55,4 +72,3 @@ exports.detectMessageLanguage = createAIFunction("detections", async (request, c
     };
   }
 });
-

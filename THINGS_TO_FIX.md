@@ -1,9 +1,9 @@
 --offline status is ugly
 -- auth errors should have better ux
 -- add and remove people from group chat once created
--- user profile page
 -- in app push notifications dont send everytime?
--- do we need streaming?
+-- do we need streaming for ai responses (idoms, context, advanced extraction)
+- can I get international keyboard in expo go app?
 
 2. List Performance Warning
 VirtualizedList: You have a large list that is slow to update
