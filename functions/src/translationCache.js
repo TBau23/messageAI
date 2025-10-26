@@ -41,8 +41,9 @@ async function getCachedTranslation(text, targetLanguage, formality) {
     
     // Check if cache is expired (7 days TTL)
     const now = Date.now();
-    const createdAt = cached.createdAt?.toMillis() || 0;
-    const ageInDays = (now - createdAt) / (1000 * 60 * 60 * 24);
+    const createdAtMs = (cached.createdAt && cached.createdAt.toMillis) ?
+      cached.createdAt.toMillis() : 0;
+    const ageInDays = (now - createdAtMs) / (1000 * 60 * 60 * 24);
     
     if (ageInDays > 7) {
       console.log('[translationCache] Cache expired:', cacheKey, `(${ageInDays.toFixed(1)} days old)`);

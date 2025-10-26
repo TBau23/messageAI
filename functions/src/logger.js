@@ -25,10 +25,10 @@ function logAIRequest(functionName, uid, input) {
  */
 function logAIResponse(functionName, responseTime, tokens = null, metadata = {}) {
   console.log(`[${functionName}] Response time: ${responseTime}ms`);
-  
+
   if (tokens !== null) {
     console.log(`[${functionName}] Tokens used: ${tokens}`);
-    
+
     // Estimate cost (approximate, for monitoring)
     const estimatedCost = estimateOpenAICost(tokens, metadata.model);
     if (estimatedCost) {
@@ -51,7 +51,7 @@ function logAIError(functionName, error, context = {}) {
   console.error(`[${functionName}] ❌ ERROR`);
   console.error(`[${functionName}] Message: ${error.message}`);
   console.error(`[${functionName}] Stack:`, error.stack);
-  
+
   if (Object.keys(context).length > 0) {
     console.error(`[${functionName}] Context:`, JSON.stringify(context, null, 2));
   }
@@ -61,17 +61,17 @@ function logAIError(functionName, error, context = {}) {
  * Estimate OpenAI API cost based on tokens and model
  * @param {number} tokens - Total tokens used
  * @param {string} model - Model name
- * @returns {number|null} Estimated cost in USD
+ * @return {number|null} Estimated cost in USD
  */
-function estimateOpenAICost(tokens, model = 'gpt-4o-mini') {
+function estimateOpenAICost(tokens, model = "gpt-4o-mini") {
   // Approximate pricing (as of 2024, subject to change)
   const pricing = {
-    'gpt-4o-mini': {
-      input: 0.15 / 1000000,   // $0.15 per 1M input tokens
-      output: 0.60 / 1000000,  // $0.60 per 1M output tokens
+    "gpt-4o-mini": {
+      input: 0.15 / 1000000, // $0.15 per 1M input tokens
+      output: 0.60 / 1000000, // $0.60 per 1M output tokens
     },
-    'gpt-4o': {
-      input: 2.50 / 1000000,   // $2.50 per 1M input tokens
+    "gpt-4o": {
+      input: 2.50 / 1000000, // $2.50 per 1M input tokens
       output: 10.00 / 1000000, // $10.00 per 1M output tokens
     },
   };
@@ -88,13 +88,13 @@ function estimateOpenAICost(tokens, model = 'gpt-4o-mini') {
 
 /**
  * Create a performance timer
- * @returns {object} Timer with start time and elapsed() method
+ * @return {object} Timer with start time and elapsed() method
  */
 function createTimer() {
   const startTime = Date.now();
   return {
     elapsed: () => Date.now() - startTime,
-    log: (message) => console.log(`⏱️  ${message}: ${Date.now() - startTime}ms`)
+    log: (message) => console.log(`⏱️  ${message}: ${Date.now() - startTime}ms`),
   };
 }
 

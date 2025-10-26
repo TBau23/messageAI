@@ -1,6 +1,6 @@
-const admin = require('firebase-admin');
-const { HttpsError } = require('firebase-functions/v2/https');
-const { FieldValue } = require('firebase-admin/firestore');
+const admin = require("firebase-admin");
+const {HttpsError} = require("firebase-functions/v2/https");
+const {FieldValue} = require("firebase-admin/firestore");
 
 // Daily limits per feature type
 const LIMITS = {
@@ -14,7 +14,7 @@ const LIMITS = {
  * Check and increment rate limit for a user and feature type
  * @param {string} uid - User ID
  * @param {string} featureType - Type of feature (translations, explanations, extractions)
- * @returns {Promise<{remaining: number}>}
+ * @return {Promise<{remaining: number}>}
  * @throws {HttpsError} if rate limit exceeded
  */
 async function checkRateLimit(uid, featureType) {
@@ -22,12 +22,12 @@ async function checkRateLimit(uid, featureType) {
     throw new Error(`Invalid feature type: ${featureType}`);
   }
 
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
   const usageRef = admin.firestore()
-    .collection('users')
-    .doc(uid)
-    .collection('aiUsage')
-    .doc(today);
+      .collection("users")
+      .doc(uid)
+      .collection("aiUsage")
+      .doc(today);
 
   try {
     const doc = await usageRef.get();
@@ -37,8 +37,8 @@ async function checkRateLimit(uid, featureType) {
     // Check if limit exceeded
     if (count >= LIMITS[featureType]) {
       throw new HttpsError(
-        'resource-exhausted',
-        `Daily ${featureType} limit reached (${LIMITS[featureType]}). Resets at midnight UTC.`
+          "resource-exhausted",
+          `Daily ${featureType} limit reached (${LIMITS[featureType]}). Resets at midnight UTC.`,
       );
     }
 
@@ -46,33 +46,33 @@ async function checkRateLimit(uid, featureType) {
     await usageRef.set({
       [featureType]: FieldValue.increment(1),
       lastUpdated: FieldValue.serverTimestamp(),
-    }, { merge: true });
+    }, {merge: true});
 
     const remaining = LIMITS[featureType] - count - 1;
     console.log(`[rateLimit] User ${uid} - ${featureType}: ${count + 1}/${LIMITS[featureType]} (${remaining} remaining)`);
 
-    return { remaining };
+    return {remaining};
   } catch (error) {
     if (error instanceof HttpsError) {
       throw error; // Re-throw rate limit errors
     }
-    console.error('[rateLimit] Error:', error);
-    throw new HttpsError('internal', 'Rate limit check failed');
+    console.error("[rateLimit] Error:", error);
+    throw new HttpsError("internal", "Rate limit check failed");
   }
 }
 
 /**
  * Get current usage for a user
  * @param {string} uid - User ID
- * @returns {Promise<{usage: object, limits: object}>}
+ * @return {Promise<{usage: object, limits: object}>}
  */
 async function getUserUsage(uid) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split("T")[0];
   const usageRef = admin.firestore()
-    .collection('users')
-    .doc(uid)
-    .collection('aiUsage')
-    .doc(today);
+      .collection("users")
+      .doc(uid)
+      .collection("aiUsage")
+      .doc(today);
 
   try {
     const doc = await usageRef.get();
@@ -95,14 +95,14 @@ async function getUserUsage(uid) {
       date: today,
     };
   } catch (error) {
-    console.error('[getUserUsage] Error:', error);
-    throw new HttpsError('internal', 'Failed to get usage data');
+    console.error("[getUserUsage] Error:", error);
+    throw new HttpsError("internal", "Failed to get usage data");
   }
 }
 
-module.exports = { 
-  checkRateLimit, 
+module.exports = {
+  checkRateLimit,
   getUserUsage,
-  LIMITS 
+  LIMITS,
 };
 

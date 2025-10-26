@@ -1,15 +1,15 @@
-const { onCall, HttpsError } = require('firebase-functions/v2/https');
-const { checkRateLimit } = require('./rateLimit');
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const {checkRateLimit} = require("./rateLimit");
 
 /**
  * Create a standardized AI function with auth, rate limiting, and error handling
- * 
+ *
  * @param {string} featureType - Rate limit category (translations, explanations, extractions)
  * @param {Function} handler - Async function that implements the AI logic
  *   Handler receives: (request, context) where context includes { uid, rateLimitRemaining }
  *   Handler should return: object with result data
- * @returns {Function} Firebase callable function
- * 
+ * @return {Function} Firebase callable function
+ *
  * @example
  * exports.myAIFunction = createAIFunction('translations', async (request, context) => {
  *   const { text } = request.data;
@@ -18,15 +18,15 @@ const { checkRateLimit } = require('./rateLimit');
  * });
  */
 function createAIFunction(featureType, handler) {
-  return onCall({ 
-    timeoutSeconds: 60,  // Allow up to 60 seconds for AI operations
-    memory: '512MiB'     // Adequate memory for AI SDK operations
+  return onCall({
+    timeoutSeconds: 60, // Allow up to 60 seconds for AI operations
+    memory: "512MiB", // Adequate memory for AI SDK operations
   }, async (request) => {
     const startTime = Date.now();
 
     // 1. Authentication check
     if (!request.auth) {
-      throw new HttpsError('unauthenticated', 'Authentication required');
+      throw new HttpsError("unauthenticated", "Authentication required");
     }
 
     const uid = request.auth.uid;
@@ -34,10 +34,10 @@ function createAIFunction(featureType, handler) {
 
     try {
       // 2. Rate limiting check
-      const { remaining } = await checkRateLimit(uid, featureType);
+      const {remaining} = await checkRateLimit(uid, featureType);
 
       // 3. Execute AI operation
-      const result = await handler(request, { uid, rateLimitRemaining: remaining });
+      const result = await handler(request, {uid, rateLimitRemaining: remaining});
 
       // 4. Log success metrics
       const duration = Date.now() - startTime;
@@ -49,7 +49,6 @@ function createAIFunction(featureType, handler) {
         quotaRemaining: remaining,
         responseTime: duration,
       };
-
     } catch (error) {
       // Log error details
       const duration = Date.now() - startTime;
@@ -62,8 +61,8 @@ function createAIFunction(featureType, handler) {
 
       // Wrap other errors
       throw new HttpsError(
-        'internal',
-        `${featureType} operation failed: ${error.message}`
+          "internal",
+          `${featureType} operation failed: ${error.message}`,
       );
     }
   });
@@ -77,10 +76,10 @@ function createAIFunction(featureType, handler) {
  */
 function validateRequest(data, requiredFields) {
   for (const field of requiredFields) {
-    if (data[field] === undefined || data[field] === null || data[field] === '') {
+    if (data[field] === undefined || data[field] === null || data[field] === "") {
       throw new HttpsError(
-        'invalid-argument',
-        `Missing required field: ${field}`
+          "invalid-argument",
+          `Missing required field: ${field}`,
       );
     }
   }
@@ -95,15 +94,15 @@ function validateRequest(data, requiredFields) {
 function validateTextLength(text, maxLength = 5000) {
   if (text.length > maxLength) {
     throw new HttpsError(
-      'invalid-argument',
-      `Text too long (${text.length} characters). Maximum: ${maxLength}`
+        "invalid-argument",
+        `Text too long (${text.length} characters). Maximum: ${maxLength}`,
     );
   }
 }
 
-module.exports = { 
+module.exports = {
   createAIFunction,
   validateRequest,
-  validateTextLength
+  validateTextLength,
 };
 

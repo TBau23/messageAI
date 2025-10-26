@@ -8,7 +8,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
-  Alert
+  Alert,
+  ScrollView
 } from 'react-native';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
@@ -62,6 +63,13 @@ export default function ChatScreen() {
   // Translation state for received messages
   const [translatedMessages, setTranslatedMessages] = useState({}); // messageId -> { text, isVisible, isLoading }
   const [translatingMessageId, setTranslatingMessageId] = useState(null);
+  
+  // Explanation state
+  const [showExplanationModal, setShowExplanationModal] = useState(false);
+  const [explanationData, setExplanationData] = useState(null);
+  const [explanationType, setExplanationType] = useState(null); // 'idioms' or 'cultural'
+  const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
+  const [selectedMessageForExplanation, setSelectedMessageForExplanation] = useState(null);
   
   const flatListRef = useRef(null);
   const participantSubscriptionsRef = useRef({});
@@ -537,6 +545,150 @@ export default function ChatScreen() {
     }
   };
 
+  const handleLongPressMessage = (message) => {
+    // Don't allow explanations when offline
+    if (!isOnline) {
+      Alert.alert('Offline', 'Explanation features are unavailable while offline');
+      return;
+    }
+
+    // Don't allow explanations for image-only messages or very short messages
+    if (!message.text || message.text.trim().length < 5) {
+      Alert.alert('Cannot Explain', 'Message is too short to analyze');
+      return;
+    }
+
+    setSelectedMessageForExplanation(message);
+    showExplanationActionSheet(message);
+  };
+
+  const showExplanationActionSheet = (message) => {
+    if (Platform.OS === 'ios') {
+      // Use iOS ActionSheet
+      const options = [
+        'Explain Idioms & Slang',
+        'Explain Cultural Context',
+        'Cancel'
+      ];
+      
+      const ActionSheetIOS = require('react-native').ActionSheetIOS;
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          cancelButtonIndex: 2,
+          title: 'What would you like to know?',
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) {
+            handleExplainIdioms(message);
+          } else if (buttonIndex === 1) {
+            handleExplainCulturalContext(message);
+          }
+          setSelectedMessageForExplanation(null);
+        }
+      );
+    } else {
+      // Use Android Alert
+      Alert.alert(
+        'What would you like to know?',
+        'Choose an explanation type',
+        [
+          {
+            text: 'Explain Idioms & Slang',
+            onPress: () => handleExplainIdioms(message)
+          },
+          {
+            text: 'Explain Cultural Context',
+            onPress: () => handleExplainCulturalContext(message)
+          },
+          {
+            text: 'Cancel',
+            style: 'cancel',
+            onPress: () => setSelectedMessageForExplanation(null)
+          }
+        ]
+      );
+    }
+  };
+
+  const handleExplainIdioms = async (message) => {
+    setExplanationType('idioms');
+    setShowExplanationModal(true);
+    setIsLoadingExplanation(true);
+    setExplanationData(null);
+
+    try {
+      const explainIdioms = httpsCallable(functions, 'explainIdioms');
+      const result = await explainIdioms({ text: message.text });
+
+      console.log('[Explain Idioms]', result.data.metadata?.responseTime + 'ms', 
+                  'Cached:', result.data.cached, 
+                  'Has idioms:', result.data.hasIdioms);
+
+      setExplanationData({
+        originalText: message.text,
+        hasContent: result.data.hasIdioms,
+        explanation: result.data.explanation,
+        language: result.data.languageName,
+        cached: result.data.cached,
+        responseTime: result.data.metadata?.responseTime
+      });
+    } catch (error) {
+      console.error('[Explain Idioms] Error:', error);
+      
+      // Handle specific error types
+      if (error.code === 'functions/resource-exhausted') {
+        Alert.alert('Daily Limit Reached', error.message);
+      } else {
+        Alert.alert('Explanation Failed', error.message || 'Unable to explain idioms');
+      }
+      
+      setShowExplanationModal(false);
+    } finally {
+      setIsLoadingExplanation(false);
+      setSelectedMessageForExplanation(null);
+    }
+  };
+
+  const handleExplainCulturalContext = async (message) => {
+    setExplanationType('cultural');
+    setShowExplanationModal(true);
+    setIsLoadingExplanation(true);
+    setExplanationData(null);
+
+    try {
+      const explainCulturalContext = httpsCallable(functions, 'explainCulturalContext');
+      const result = await explainCulturalContext({ text: message.text });
+
+      console.log('[Explain Cultural Context]', result.data.metadata?.responseTime + 'ms', 
+                  'Cached:', result.data.cached, 
+                  'Has context:', result.data.hasContext);
+
+      setExplanationData({
+        originalText: message.text,
+        hasContent: result.data.hasContext,
+        explanation: result.data.explanation,
+        language: result.data.languageName,
+        cached: result.data.cached,
+        responseTime: result.data.metadata?.responseTime
+      });
+    } catch (error) {
+      console.error('[Explain Cultural Context] Error:', error);
+      
+      // Handle specific error types
+      if (error.code === 'functions/resource-exhausted') {
+        Alert.alert('Daily Limit Reached', error.message);
+      } else {
+        Alert.alert('Explanation Failed', error.message || 'Unable to explain cultural context');
+      }
+      
+      setShowExplanationModal(false);
+    } finally {
+      setIsLoadingExplanation(false);
+      setSelectedMessageForExplanation(null);
+    }
+  };
+
   const handleEditGroupName = () => {
     if (conversationData?.type === 'group') {
       setEditingGroupName(conversationData.name || '');
@@ -644,7 +796,10 @@ export default function ChatScreen() {
           isMyMessage ? styles.myMessageContainer : styles.otherMessageContainer
         ]}
       >
-        <View
+        <TouchableOpacity
+          activeOpacity={0.7}
+          onLongPress={() => handleLongPressMessage(item)}
+          delayLongPress={500}
           style={[
             styles.messageBubble,
             isMyMessage ? styles.myMessageBubble : styles.otherMessageBubble,
@@ -711,7 +866,7 @@ export default function ChatScreen() {
               <Text style={styles.retryButtonText}>Retry</Text>
             </TouchableOpacity>
           )}
-        </View>
+        </TouchableOpacity>
         
         {/* Translate button for foreign language messages */}
         {shouldShowTranslateButton && (
@@ -1206,6 +1361,84 @@ export default function ChatScreen() {
               onPress={() => setShowTranslationSettings(false)}
             >
               <Text style={styles.translationSettingsCloseButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Explanation Modal */}
+      <Modal
+        visible={showExplanationModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowExplanationModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.explanationModal}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>
+                {explanationType === 'idioms' ? '💬 Idiom Explanation' : '🌍 Cultural Context'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowExplanationModal(false)}>
+                <Text style={styles.modalClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Loading state */}
+            {isLoadingExplanation && (
+              <View style={styles.explanationLoading}>
+                <Text style={styles.explanationLoadingText}>⏳ Analyzing message...</Text>
+              </View>
+            )}
+
+            {/* Explanation content */}
+            {!isLoadingExplanation && explanationData && (
+              <ScrollView style={styles.explanationContent}>
+                {/* Original message reference */}
+                <View style={styles.explanationOriginalMessage}>
+                  <Text style={styles.explanationOriginalLabel}>Original Message:</Text>
+                  <Text style={styles.explanationOriginalText}>
+                    {explanationData.originalText}
+                  </Text>
+                  {explanationData.language && (
+                    <Text style={styles.explanationLanguageLabel}>
+                      Language: {explanationData.language}
+                    </Text>
+                  )}
+                </View>
+
+                {/* Explanation or "not found" message */}
+                {explanationData.hasContent ? (
+                  <View style={styles.explanationTextContainer}>
+                    <Text style={styles.explanationText}>
+                      {explanationData.explanation}
+                    </Text>
+                    {explanationData.cached && (
+                      <Text style={styles.explanationCacheNote}>
+                        📦 From cache ({explanationData.responseTime}ms)
+                      </Text>
+                    )}
+                  </View>
+                ) : (
+                  <View style={styles.explanationNoContent}>
+                    <Text style={styles.explanationNoContentText}>
+                      {explanationType === 'idioms' 
+                        ? '✓ No idioms or slang expressions found in this message.'
+                        : '✓ No specific cultural context needed for this message.'}
+                    </Text>
+                    <Text style={styles.explanationNoContentSubtext}>
+                      This appears to be straightforward communication.
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
+            )}
+
+            <TouchableOpacity
+              style={styles.explanationDismissButton}
+              onPress={() => setShowExplanationModal(false)}
+            >
+              <Text style={styles.explanationDismissButtonText}>Dismiss</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1936,5 +2169,101 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000',
     lineHeight: 22,
+  },
+  // Explanation Modal styles
+  explanationModal: {
+    width: '100%',
+    maxWidth: 500,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingBottom: 20,
+    maxHeight: '80%',
+  },
+  explanationLoading: {
+    paddingVertical: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  explanationLoadingText: {
+    fontSize: 16,
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  explanationContent: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 10,
+    flexGrow: 1,
+  },
+  explanationOriginalMessage: {
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    borderLeftWidth: 3,
+    borderLeftColor: '#075E54',
+  },
+  explanationOriginalLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  explanationOriginalText: {
+    fontSize: 15,
+    color: '#333',
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  explanationLanguageLabel: {
+    fontSize: 11,
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  explanationTextContainer: {
+    paddingVertical: 8,
+  },
+  explanationText: {
+    fontSize: 15,
+    color: '#333',
+    lineHeight: 24,
+    marginBottom: 12,
+  },
+  explanationCacheNote: {
+    fontSize: 11,
+    color: '#888',
+    fontStyle: 'italic',
+    textAlign: 'right',
+  },
+  explanationNoContent: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  explanationNoContentText: {
+    fontSize: 15,
+    color: '#4caf50',
+    textAlign: 'center',
+    marginBottom: 8,
+    fontWeight: '500',
+  },
+  explanationNoContentSubtext: {
+    fontSize: 13,
+    color: '#666',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  explanationDismissButton: {
+    backgroundColor: '#075E54',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 16,
+  },
+  explanationDismissButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

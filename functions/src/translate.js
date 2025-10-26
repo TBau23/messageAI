@@ -98,13 +98,13 @@ ${text}`;
 
   try {
     const { text: translatedText, usage } = await generateText({
-      model: openai('gpt-4o-mini'),
+      model: openai("gpt-4o-mini"),
       prompt,
       temperature: 0.3, // Lower temperature for more consistent translations
     });
     
     const responseTime = Date.now() - startTime;
-    const totalTokens = usage?.totalTokens || 0;
+    const totalTokens = (usage && usage.totalTokens) || 0;
     
     logAIResponse('translateText', responseTime, totalTokens, {
       sourceLanguage,
