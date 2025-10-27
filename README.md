@@ -1,53 +1,8 @@
 # MessageAI - AI-Powered Messaging App
 
-A production-quality messaging application built with React Native, Expo, and Firebase. Features real-time messaging, group chats, offline support, read receipts, and AI-powered translation and cultural insights for international communication.
+A messaging application built with React Native, Expo, and Firebase. Features real-time messaging, group chats, offline support, read receipts, and AI-powered translation and cultural insights for international communication.
 
-## 🎯 MVP Features
-
-✅ **Core Messaging**
-- One-on-one chat functionality
-- Real-time message delivery between multiple users
-- Message persistence (survives app restarts)
-- Optimistic UI updates (messages appear instantly)
-- Message timestamps
-
-✅ **User Management**
-- User authentication (email/password)
-- User profiles with display names
-- Online/offline status indicators
-
-✅ **Group Chat**
-- Create group conversations (3+ users)
-- Group naming
-- Message attribution (sender names in groups)
-- Group participant list
-
-✅ **Read Receipts**
-- Single grey checkmark (✓) - Message sent
-- Double grey checkmark (✓✓) - Message delivered to all
-- Double blue checkmark (✓✓) - Message read by all
-- Works in both direct and group chats
-
-✅ **Notifications**
-- Foreground notification banners for incoming messages
-- Smart notifications (don't show for currently open chat)
-- Tap to navigate to conversation
-
-✅ **Offline Support**
-- SQLite local cache for instant loading
-- Firestore offline persistence
-- Network status monitoring
-- Visual network status indicators
-
-✅ **AI Features** (International Communicator Persona)
-- Real-time message translation (inline)
-- Automatic language detection
-- Cultural context hints and explanations
-- Formality level adjustment
-- Slang and idiom explanations
-- Conversation insights extraction
-
-## 📋 Prerequisites
+## Prerequisites
 
 Before you begin, ensure you have:
 
@@ -59,7 +14,7 @@ Before you begin, ensure you have:
 - A **Firebase account** (free tier is sufficient)
 - An **OpenAI API key** (for AI features) - Get one at https://platform.openai.com/api-keys
 
-## 🚀 Getting Started
+## Getting Started
 
 **Choose Your Setup Path:**
 
@@ -70,7 +25,7 @@ Before you begin, ensure you have:
 
 ---
 
-### Quick Start (Production Firebase - Recommended)
+### Quick Start 
 
 This is the easiest path and includes all AI features.
 
@@ -295,56 +250,7 @@ open -a Simulator --args -CurrentDeviceUDID <DEVICE_UDID_2>
    - Test offline mode (toggle airplane mode in simulator)
    - Force quit and restart to test persistence
 
-## 🏗️ Project Structure
-
-```
-react-messageai/
-├── app/                        # Expo Router screens
-│   ├── (auth)/                 # Authentication screens
-│   │   ├── login.js
-│   │   ├── signup.js
-│   │   └── profile-setup.js
-│   ├── (main)/                 # Main app screens
-│   │   ├── index.js            # Chat list
-│   │   ├── new-chat.js         # Create chat/group
-│   │   ├── profile.js          # User profile
-│   │   └── chat/
-│   │       └── [id].js         # Chat screen
-│   └── _layout.js              # Root layout
-├── components/                 # Reusable components
-│   ├── Avatar.js               # Profile pictures
-│   ├── NetworkBanner.js        # Network status indicator
-│   ├── MessageNotification.js  # Foreground notifications
-│   ├── MessageStatusIndicator.js # Read receipts UI
-│   └── chat/                   # Chat-specific components
-│       ├── MessageBubble.js
-│       ├── InsightsModal.js    # AI cultural insights
-│       ├── MemberListModal.js
-│       └── EditGroupNameModal.js
-├── store/                      # Zustand state management
-│   ├── authStore.js            # Authentication state
-│   ├── chatStore.js            # Chat/message state
-│   └── notificationStore.js    # Notification state
-├── utils/                      # Utility functions
-│   ├── database.js             # SQLite cache
-│   ├── networkMonitor.js       # Network monitoring
-│   ├── notifications.js        # Push notifications
-│   └── imageUtils.js           # Image handling
-├── functions/                  # Firebase Cloud Functions
-│   ├── src/
-│   │   ├── translate.js        # Translation API
-│   │   ├── detectLanguage.js   # Language detection
-│   │   ├── explainIdioms.js    # Idiom explanations
-│   │   ├── explainCulturalContext.js
-│   │   ├── extractCulturalInsights.js
-│   │   └── agentTools.js       # AI helper tools
-│   └── index.js                # Function exports
-├── firebaseConfig.js           # Firebase initialization
-├── firestore.rules             # Security rules
-└── package.json
-```
-
-## 🤖 Using AI Features
+##  Using AI Features
 
 ### Translation
 In any chat, long-press a message to see translation options. The app will:
@@ -370,81 +276,7 @@ All AI features use Firebase Cloud Functions to:
 - Log usage for monitoring
 
 
-### Users Collection
-
-```javascript
-users/{userId}
-  - displayName: string
-  - email: string
-  - online: boolean
-  - lastSeen: timestamp
-  - createdAt: timestamp
-```
-
-### Conversations Collection
-
-```javascript
-conversations/{conversationId}
-  - participants: [userId1, userId2, ...]  // Array of user IDs
-  - type: 'direct' | 'group'
-  - name: string                           // For groups
-  - lastMessage: {
-      text: string,
-      senderId: string,
-      timestamp: timestamp
-    }
-  - updatedAt: timestamp
-  - createdAt: timestamp
-
-  messages/{messageId}                     // Subcollection
-    - text: string
-    - senderId: string
-    - timestamp: timestamp
-    - deliveredTo: [userId1, userId2, ...]
-    - readBy: [userId1, userId2, ...]
-    - status: 'sending' | 'sent' | 'delivered' | 'read'
-```
-
-
-### Real-Time Messaging
-- [ ] User A sends message → appears on User B immediately
-- [ ] User B replies → appears on User A immediately
-- [ ] Rapid-fire messages (20+ quickly) maintain order
-- [ ] Message ordering consistent across devices
-
-### Persistence
-- [ ] Send messages → force quit app → reopen → messages still there
-- [ ] User A sends 5 messages → User B opens app → all 5 appear
-
-### Offline Mode
-- [ ] User A goes offline → User B sends messages → User A comes online → messages sync
-- [ ] User A sends message offline → queued → comes online → message delivers
-- [ ] App shows offline indicator when no network
-
-### Presence
-- [ ] User appears online when app is open
-- [ ] User appears offline when app is closed
-- [ ] "Last seen" timestamp updates correctly
-
-### Read Receipts
-- [ ] User A sends message → User B opens chat → checkmarks turn blue
-- [ ] Group chat: checkmarks update as each user reads
-- [ ] Single checkmark when sent
-- [ ] Double grey when delivered to all
-- [ ] Double blue when read by all
-
-### Group Chat
-- [ ] Create group with 3+ users
-- [ ] All participants receive messages
-- [ ] Sender names show in group messages
-- [ ] Read receipts track all participants
-
-### Foreground Notifications
-- [ ] User B sends message → User A receives notification banner
-- [ ] Tap notification → opens correct chat
-- [ ] No notification for currently open chat
-
-## 🛠️ Tech Stack
+## Tech Stack
 
 - **Frontend**: React Native 0.81.4 with React 19.1.0
 - **Framework**: Expo SDK 54
@@ -458,103 +290,9 @@ conversations/{conversationId}
   - Storage (Profile photos, group photos, message images)
 - **AI/ML**: 
   - OpenAI GPT-4o and GPT-4o-mini via @ai-sdk/openai
-  - Vercel AI SDK for streaming and tool calling
 - **Utilities**: date-fns, @react-native-community/netinfo, expo-notifications
 
-## 🐛 Troubleshooting
 
-### Functions Won't Deploy
 
-**Error**: "Linting failed"
-```bash
-cd functions
-npm run lint -- --fix
-cd ..
-firebase deploy --only functions
-```
 
-### Can't Connect to Emulators
-
-**Error**: "Emulator connection refused"
-- Make sure emulators are running: `npm run emulators`
-- Check that `EXPO_PUBLIC_EMULATOR_HOST=127.0.0.1` is in your `.env`
-- For physical devices, use your computer's local IP instead of `127.0.0.1`
-
-### Metro Bundler Errors
-
-**Error**: "Unable to resolve module"
-```bash
-# Clear cache and reinstall
-rm -rf node_modules
-npm cache clean --force
-npm install
-npx expo start --clear
-```
-
-### Firestore Index Missing
-
-**Error**: "The query requires an index"
-- Click the link in the error message to auto-create the index
-- Or manually create it in Firebase Console (see step 3e above)
-
-### AI Features Not Working
-
-**Checklist**:
-- [ ] Functions deployed: `firebase functions:list`
-- [ ] OpenAI API key set in `functions/.env`
-- [ ] Check function logs: `firebase functions:log`
-- [ ] Verify you have OpenAI credits: https://platform.openai.com/usage
-
----
-
-## 💰 Cost Estimates (Free Tier Limits)
-
-### Firebase (Free Spark Plan)
-- **Firestore**: 50K reads/day, 20K writes/day, 20K deletes/day
-- **Authentication**: Unlimited
-- **Functions**: 2M invocations/month, 400K GB-seconds/month
-- **Storage**: 5GB total, 1GB/day downloads
-
-### OpenAI API
-- **GPT-4o-mini**: ~$0.0015 per 10K input tokens, ~$0.006 per 10K output tokens
-- **Typical translation**: ~$0.002 per message
-- **Cultural insights**: ~$0.01 per conversation analysis
-- **Budget recommendation**: $5-10/month for moderate testing
-
-**Tip**: The app implements caching to minimize repeated AI calls.
-
----
-
-## 📚 Additional Resources
-
-- **Architecture Document**: See `architecture-updated.md` for detailed system design
-- **Epic Planning**: Check `ai_planning/` directory for implementation phases
-- **Firebase Console**: https://console.firebase.google.com/project/YOUR_PROJECT_ID
-- **Expo Dashboard**: https://expo.dev/accounts/tbizzer/projects/react-messageai
-- **OpenAI Platform**: https://platform.openai.com/usage
-
----
-
-## 📄 License
-
-This project was built as part of a university assignment for CS 4530 - Mobile AI Development.
-
----
-
-## 🙋 Support
-
-If you run into issues:
-1. Check the **Troubleshooting** section above
-2. Review Firebase Console logs
-3. Check function logs: `firebase functions:log --limit 50`
-4. Ensure all dependencies are installed: `npm install && cd functions && npm install`
-
-**Common Quick Fixes**:
-```bash
-# Clear everything and start fresh
-rm -rf node_modules functions/node_modules
-npm install
-cd functions && npm install && cd ..
-npx expo start --clear
-```
 
