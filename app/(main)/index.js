@@ -179,12 +179,19 @@ export default function ChatListScreen() {
           >
             <Text style={styles.menuItemText}>Profile</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.menuItem} onPress={handleClearCache}>
-            <Text style={styles.menuItemText}>Clear Cache</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.menuItem} onPress={handleResetDatabase}>
-            <Text style={[styles.menuItemText, { color: '#d32f2f' }]}>Reset Database</Text>
-          </TouchableOpacity>
+          
+          {/* Development-only debug options */}
+          {__DEV__ && (
+            <>
+              <TouchableOpacity style={styles.menuItem} onPress={handleClearCache}>
+                <Text style={styles.menuItemText}>Clear Cache</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.menuItem} onPress={handleResetDatabase}>
+                <Text style={[styles.menuItemText, { color: '#d32f2f' }]}>Reset Database</Text>
+              </TouchableOpacity>
+            </>
+          )}
+          
           <TouchableOpacity style={styles.menuItem} onPress={handleSignOut}>
             <Text style={styles.menuItemText}>Sign Out</Text>
           </TouchableOpacity>

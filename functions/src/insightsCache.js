@@ -32,9 +32,6 @@ async function getCachedInsights(
     const doc = await cacheRef.get();
 
     if (!doc.exists) {
-      console.log(
-          `[getCachedInsights] No cache found for conversation ${conversationId}, user ${userId}`,
-      );
       return null;
     }
 
@@ -45,17 +42,11 @@ async function getCachedInsights(
 
     // Check if cache is expired
     if (expiresAt && new Date() > new Date(expiresAt)) {
-      console.log(
-          `[getCachedInsights] Cache expired for conversation ${conversationId}`,
-      );
       return null;
     }
 
     // Check if user's language preference changed
     if (cachedLanguage !== userLanguage) {
-      console.log(
-          `[getCachedInsights] User language changed from ${cachedLanguage} to ${userLanguage}, invalidating cache`,
-      );
       return null;
     }
 
@@ -63,10 +54,6 @@ async function getCachedInsights(
     const messageCountDelta = currentMessageCount - cachedMessageCount;
 
     if (messageCountDelta >= MESSAGE_COUNT_THRESHOLD) {
-      console.log(
-          `[getCachedInsights] Message count increased by ${messageCountDelta} ` +
-          `(threshold: ${MESSAGE_COUNT_THRESHOLD}), cache stale`,
-      );
       return null;
     }
 
@@ -75,11 +62,6 @@ async function getCachedInsights(
     const cacheAge = createdAt ?
       Math.round((Date.now() - new Date(createdAt).getTime()) / 1000) :
       0;
-
-    console.log(
-        `[getCachedInsights] Cache hit for conversation ${conversationId}. ` +
-        `Age: ${cacheAge}s, Message delta: ${messageCountDelta}`,
-    );
 
     return {
       insights: data.insights,
@@ -127,10 +109,6 @@ async function setCachedInsights(
       expiresAt,
     });
 
-    console.log(
-        `[setCachedInsights] Cached insights for conversation ${conversationId}, ` +
-        `user ${userId}, ${messageCount} messages, expires in ${CACHE_TTL_HOURS}h`,
-    );
   } catch (error) {
     console.error("[setCachedInsights] Error:", error);
     // Don't throw - caching failure shouldn't break the feature
@@ -152,9 +130,6 @@ async function clearConversationCache(conversationId) {
     const snapshot = await cacheRef.get();
 
     if (snapshot.empty) {
-      console.log(
-          `[clearConversationCache] No cache to clear for ${conversationId}`,
-      );
       return;
     }
 
@@ -165,9 +140,6 @@ async function clearConversationCache(conversationId) {
 
     await batch.commit();
 
-    console.log(
-        `[clearConversationCache] Cleared ${snapshot.size} cached insights for ${conversationId}`,
-    );
   } catch (error) {
     console.error("[clearConversationCache] Error:", error);
   }

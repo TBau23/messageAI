@@ -39,7 +39,6 @@ async function retrieveConversationMessages(conversationId, limit = 100) {
         .get();
 
     if (messagesSnapshot.empty) {
-      console.log(`[retrieveConversationMessages] No messages found in conversation ${conversationId}`);
       return [];
     }
 
@@ -53,9 +52,7 @@ async function retrieveConversationMessages(conversationId, limit = 100) {
       // Include any other relevant fields
     }));
 
-    const msgCount = messages.length;
-    console.log(`[retrieveConversationMessages] Retrieved ` +
-      `${msgCount} messages from conversation ${conversationId}`);
+
 
     return messages;
   } catch (error) {

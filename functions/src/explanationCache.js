@@ -33,7 +33,6 @@ async function getCachedExplanation(text, type, language) {
     const doc = await cacheRef.get();
 
     if (!doc.exists) {
-      console.log("[explanationCache] Cache miss:", cacheKey);
       return null;
     }
 
@@ -46,13 +45,11 @@ async function getCachedExplanation(text, type, language) {
     const ageInDays = (now - createdAtMs) / (1000 * 60 * 60 * 24);
 
     if (ageInDays > 30) {
-      console.log("[explanationCache] Cache expired:", cacheKey, `(${ageInDays.toFixed(1)} days old)`);
       // Delete expired cache entry
       await cacheRef.delete();
       return null;
     }
 
-    console.log("[explanationCache] Cache hit:", cacheKey, `(${ageInDays.toFixed(1)} days old)`);
 
     return {
       hasContent: cached.hasContent,

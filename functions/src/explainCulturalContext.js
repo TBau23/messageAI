@@ -38,7 +38,6 @@ exports.explainCulturalContext = createAIFunction("explanations", async (request
 
   if (cached) {
     const cacheResponseTime = Date.now() - startTime;
-    console.log(`[explainCulturalContext] Cache hit - Response time: ${cacheResponseTime}ms`);
 
     return {
       hasContext: cached.hasContent,

@@ -38,9 +38,6 @@ exports.extractCulturalInsights = createAIFunction(
       try {
         // Step 1: Get user's default language
         const userLanguage = await getUserDefaultLanguage(uid);
-        console.log(
-            `[extractCulturalInsights] User ${uid} language: ${userLanguage}`,
-        );
 
         // Step 2: Retrieve messages from conversation
         const messages = await retrieveConversationMessages(
@@ -76,9 +73,6 @@ exports.extractCulturalInsights = createAIFunction(
 
         if (cached) {
           const cacheResponseTime = Date.now() - startTime;
-          console.log(
-              `[extractCulturalInsights] Cache hit - Response time: ${cacheResponseTime}ms`,
-          );
 
           return {
             hasInsights: true,
@@ -147,14 +141,6 @@ exports.extractCulturalInsights = createAIFunction(
         // Step 7: Call agent with structured output
         const insightsSchema = getCombinedInsightsSchema();
 
-        console.log(
-            `[extractCulturalInsights] Calling GPT-4o with structured output`,
-        );
-        console.log(
-            `[extractCulturalInsights] Messages: ${messages.length}, ` +
-            `Languages: ${languagesDetected.join(", ")}`,
-        );
-
         let structuredOutput;
         let usage;
 
@@ -170,18 +156,6 @@ exports.extractCulturalInsights = createAIFunction(
 
           structuredOutput = result.object;
           usage = result.usage;
-
-          console.log(
-              `[extractCulturalInsights] Agent completed successfully`,
-          );
-          console.log(
-              `[extractCulturalInsights] Raw output keys:`,
-              Object.keys(structuredOutput),
-          );
-          console.log(
-              `[extractCulturalInsights] Raw output:`,
-              JSON.stringify(structuredOutput, null, 2),
-          );
 
           // Validate that all required keys exist
           const requiredKeys = [

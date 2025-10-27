@@ -46,10 +46,6 @@ exports.detectMessageLanguage = onCall({
     const languageName = getLanguageName(detectedLanguage);
     const responseTime = Date.now() - startTime;
 
-    console.log(`[detectMessageLanguage] User: ${uid}, ` +
-        `Detected: ${detectedLanguage} (${languageName}), ` +
-        `Time: ${responseTime}ms`);
-
     return {
       success: true,
       language: detectedLanguage,

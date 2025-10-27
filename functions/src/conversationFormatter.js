@@ -124,10 +124,6 @@ function formatConversationForAgent(
 
     const fromCount = enrichedMessages.length;
     const toCount = truncatedMessages.length;
-    console.log(
-        `[formatConversationForAgent] Truncating from ` +
-        `${fromCount} to ${toCount} messages`,
-    );
 
     // Rebuild with truncated messages
     return formatConversationForAgent(

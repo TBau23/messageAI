@@ -105,29 +105,26 @@ export default function ProfileScreen() {
   const handleTestAI = async () => {
     try {
       setIsTestingAI(true);
-      console.log('🧪 Testing Translation & Cache...');
+
       
       const translateText = httpsCallable(functions, 'translateText');
       
       // First call - should hit OpenAI
-      console.log('📞 First call (uncached)...');
+
       const result1 = await translateText({
         text: 'Hello, how are you today?',
         targetLanguage: 'es',
         formality: 'neutral'
       });
-      console.log('✅ First call:', result1.data.metadata.responseTime + 'ms', 
-                  'Cached:', result1.data.cached);
-      
+
       // Second call - should hit cache
-      console.log('📞 Second call (should be cached)...');
+
       const result2 = await translateText({
         text: 'Hello, how are you today?',
         targetLanguage: 'es',
         formality: 'neutral'
       });
-      console.log('✅ Second call:', result2.data.metadata.responseTime + 'ms',
-                  'Cached:', result2.data.cached);
+
       
       Alert.alert(
         '✅ Translation & Cache Test!',
@@ -438,20 +435,24 @@ export default function ProfileScreen() {
 
         {/* Actions */}
         <View style={styles.actionsSection}>
-          {/* TEST AI BUTTON - Remove after Epic 1 testing */}
-          <TouchableOpacity 
-            style={[styles.actionButton, styles.testAIButton]} 
-            onPress={handleTestAI}
-            disabled={isTestingAI}
-          >
-            <Text style={styles.actionButtonText}>
-              {isTestingAI ? '🔄 Testing AI...' : '🧪 Test AI Connection'}
-            </Text>
-          </TouchableOpacity>
+          {/* Development-only debug buttons */}
+          {__DEV__ && (
+            <>
+              <TouchableOpacity 
+                style={[styles.actionButton, styles.testAIButton]} 
+                onPress={handleTestAI}
+                disabled={isTestingAI}
+              >
+                <Text style={styles.actionButtonText}>
+                  {isTestingAI ? '🔄 Testing AI...' : '🧪 Test AI Connection'}
+                </Text>
+              </TouchableOpacity>
 
-          <TouchableOpacity style={styles.actionButton} onPress={handleClearCache}>
-            <Text style={styles.actionButtonText}>Clear Cache</Text>
-          </TouchableOpacity>
+              <TouchableOpacity style={styles.actionButton} onPress={handleClearCache}>
+                <Text style={styles.actionButtonText}>Clear Cache</Text>
+              </TouchableOpacity>
+            </>
+          )}
 
           <TouchableOpacity
             style={[styles.actionButton, styles.signOutButton]}

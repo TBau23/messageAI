@@ -233,9 +233,6 @@ export default function ChatScreen() {
             formality
           });
 
-          console.log('[Translation Preview]', result.data.metadata.responseTime + 'ms', 
-                      'Cached:', result.data.cached);
-
           setTranslationPreview(result.data.translatedText);
         } catch (error) {
           console.error('[Translation Preview] Error:', error);
@@ -345,7 +342,6 @@ export default function ChatScreen() {
         
         if (result.data.success && result.data.settings?.defaultLanguage) {
           setUserPreferredLanguage(result.data.settings.defaultLanguage);
-          console.log('[Chat] User preferred language:', result.data.settings.defaultLanguage);
         }
       } catch (error) {
         console.error('[Chat] Error loading language preference:', error);
@@ -369,7 +365,7 @@ export default function ChatScreen() {
       // Disable translation toggle when offline
       if (translationEnabled) {
         setTranslationEnabled(false);
-        console.log('[Chat] Translation disabled - offline');
+        
       }
       
       // Clear any pending translation timeout
@@ -448,7 +444,6 @@ export default function ChatScreen() {
       // Only proceed if there are new messages to detect
       if (messagesToDetect.length === 0) return;
 
-      console.log(`[Language Detection] Detecting for ${messagesToDetect.length} new messages`);
 
       // Detect language for each message (in parallel)
       const detectionPromises = messagesToDetect.map(async (msg) => {
@@ -553,9 +548,6 @@ export default function ChatScreen() {
         formality: 'neutral'
       });
 
-      console.log('[Message Translation]', result.data.metadata.responseTime + 'ms', 
-                  'Cached:', result.data.cached);
-
       // Store translated text
       setTranslatedMessages(prev => ({
         ...prev,
@@ -650,10 +642,6 @@ export default function ChatScreen() {
       const explainIdioms = httpsCallable(functions, 'explainIdioms');
       const result = await explainIdioms({ text: message.text });
 
-      console.log('[Explain Idioms]', result.data.metadata?.responseTime + 'ms', 
-                  'Cached:', result.data.cached, 
-                  'Has idioms:', result.data.hasIdioms);
-
       setExplanationData({
         originalText: message.text,
         hasContent: result.data.hasIdioms,
@@ -689,9 +677,6 @@ export default function ChatScreen() {
       const explainCulturalContext = httpsCallable(functions, 'explainCulturalContext');
       const result = await explainCulturalContext({ text: message.text });
 
-      console.log('[Explain Cultural Context]', result.data.metadata?.responseTime + 'ms', 
-                  'Cached:', result.data.cached, 
-                  'Has context:', result.data.hasContext);
 
       setExplanationData({
         originalText: message.text,
@@ -767,14 +752,9 @@ export default function ChatScreen() {
     setInsightsData(null);
 
     try {
-      console.log('[Cultural Insights] Requesting insights for conversation:', id);
+
       const extractCulturalInsights = httpsCallable(functions, 'extractCulturalInsights');
       const result = await extractCulturalInsights({ conversationId: id });
-
-      console.log('[Cultural Insights]', result.data.metadata?.responseTime + 'ms',
-        'Cached:', result.data.cached,
-        'Has insights:', result.data.hasInsights,
-        'Total insights:', result.data.insights?.totalInsights || 0);
 
       if (!result.data.hasInsights) {
         // No insights found - show friendly message

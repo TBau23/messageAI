@@ -142,14 +142,6 @@ function formatStructuredOutput(structuredOutput) {
     insights.communicationStyles.length +
     insights.learningOpportunities.length;
 
-  console.log(
-      `[formatStructuredOutput] Formatted ${insights.totalInsights} total insights: ` +
-    `${insights.culturalReferences.length} cultural, ` +
-    `${insights.idioms.length} idioms, ` +
-    `${insights.communicationStyles.length} styles, ` +
-    `${insights.learningOpportunities.length} learning`,
-  );
-
   return insights;
 }
 

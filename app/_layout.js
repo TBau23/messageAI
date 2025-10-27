@@ -19,7 +19,6 @@ export default function RootLayout() {
     const initDatabase = async () => {
       try {
         await database.init();
-        console.log('✅ SQLite database initialized');
         setDbInitialized(true);
       } catch (error) {
         console.error('❌ Failed to initialize database:', error);
