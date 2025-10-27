@@ -29,6 +29,9 @@ import { Image } from 'expo-image';
 import { updateDoc } from 'firebase/firestore';
 import { styles } from './[id].styles';
 import MessageBubble from '../../../components/chat/MessageBubble';
+import MemberListModal from '../../../components/chat/MemberListModal';
+import EditGroupNameModal from '../../../components/chat/EditGroupNameModal';
+import MessageStatusModal from '../../../components/chat/MessageStatusModal';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams();
@@ -1050,99 +1053,23 @@ export default function ChatScreen() {
       </View>
 
       {/* Member List Modal for Groups */}
-      <Modal
+      <MemberListModal
         visible={showMemberList}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowMemberList(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Group Members</Text>
-              <TouchableOpacity onPress={() => setShowMemberList(false)}>
-                <Text style={styles.modalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <FlatList
-              data={Object.entries(participantMap)}
-              keyExtractor={([uid]) => uid}
-              renderItem={({ item: [uid, userData] }) => (
-                <View style={styles.memberItem}>
-                  <Avatar
-                    photoURL={userData.photoURL}
-                    displayName={userData.displayName}
-                    userId={uid}
-                    size={45}
-                  />
-                  <View style={styles.memberInfo}>
-                    <Text style={styles.memberName}>
-                      {userData.displayName || 'Unknown'}
-                      {uid === user.uid && ' (You)'}
-                    </Text>
-                    <View style={styles.memberStatusContainer}>
-                      <View style={[
-                        styles.statusDot,
-                        userData.online ? styles.statusDotOnline : styles.statusDotOffline
-                      ]} />
-                      <Text style={styles.memberStatus}>
-                        {userData.online ? 'Online' : 'Offline'}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              )}
-              style={styles.memberList}
-            />
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setShowMemberList(false)}
+        participantMap={participantMap}
+        currentUserId={user?.uid}
+        styles={styles}
+      />
 
       {/* Edit Group Name Modal */}
-      <Modal
+      <EditGroupNameModal
         visible={showEditGroupNameModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowEditGroupNameModal(false)}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.editGroupModalOverlay}
-        >
-          <TouchableOpacity 
-            style={styles.editGroupModalBackdrop}
-            activeOpacity={1}
-            onPress={() => setShowEditGroupNameModal(false)}
-          />
-          <View style={styles.editGroupModalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Edit Group Name</Text>
-              <TouchableOpacity onPress={() => setShowEditGroupNameModal(false)}>
-                <Text style={styles.modalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <TextInput
-              style={styles.groupNameInput}
-              value={editingGroupName}
-              onChangeText={setEditingGroupName}
-              placeholder="Group name"
-              autoFocus
-              maxLength={50}
-              returnKeyType="done"
-              onSubmitEditing={handleSaveGroupName}
-            />
-            
-            <TouchableOpacity
-              style={styles.saveGroupNameButton}
-              onPress={handleSaveGroupName}
-            >
-              <Text style={styles.saveGroupNameButtonText}>Save</Text>
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
+        onClose={() => setShowEditGroupNameModal(false)}
+        groupName={editingGroupName}
+        onChangeText={setEditingGroupName}
+        onSave={handleSaveGroupName}
+        styles={styles}
+      />
 
       {/* Translation Settings Modal */}
       <Modal
@@ -1325,66 +1252,16 @@ export default function ChatScreen() {
       </Modal>
 
       {/* Delivery / Read Detail Modal */}
-      <Modal
+      <MessageStatusModal
         visible={!!selectedStatusMessage}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setSelectedStatusMessage(null)}
-      >
-        <View style={styles.statusModalOverlay}>
-          <View style={styles.statusModalContent}>
-            <View style={styles.statusModalHeader}>
-              <Text style={styles.statusModalTitle}>Message Status</Text>
-              <TouchableOpacity onPress={() => setSelectedStatusMessage(null)}>
-                <Text style={styles.statusModalClose}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            {selectedStatusMessage && (
-              <View style={styles.statusModalBody}>
-                <Text style={styles.statusModalMessageText}>
-                  {selectedStatusMessage.text}
-                </Text>
-                <Text style={styles.statusModalTimestamp}>
-                  Sent {formatReceiptTimestamp(selectedStatusMessage.timestamp) || 'Pending'}
-                </Text>
-
-                <View style={styles.statusModalListHeader}>
-                  <Text style={[styles.statusModalListHeaderText, styles.statusModalListHeaderParticipant]}>
-                    Participant
-                  </Text>
-                  <Text style={[styles.statusModalListHeaderText, styles.statusModalListHeaderRead]}>
-                    Read Status
-                  </Text>
-                </View>
-
-                {(conversationData?.participants || [])
-                  .filter(uid => uid !== user?.uid)
-                  .map(uid => {
-                    const userData = participantMap[uid] || {};
-                    const readBy = selectedStatusMessage.readBy || [];
-                    const readAt = formatReceiptTimestamp(
-                      selectedStatusMessage.readReceipts?.[uid]
-                    );
-
-                    const readLabel = readBy.includes(uid)
-                      ? readAt ? `Read at ${readAt}` : 'Read'
-                      : 'Not read';
-
-                    return (
-                      <View key={uid} style={styles.statusModalRow}>
-                        <Text style={[styles.statusModalParticipant, styles.statusModalParticipantCell]}>
-                          {userData.displayName || 'Unknown'}
-                        </Text>
-                        <Text style={styles.statusModalRead}>{readLabel}</Text>
-                      </View>
-                    );
-                  })}
-              </View>
-            )}
-          </View>
-        </View>
-      </Modal>
+        onClose={() => setSelectedStatusMessage(null)}
+        message={selectedStatusMessage}
+        participants={conversationData?.participants || []}
+        participantMap={participantMap}
+        currentUserId={user?.uid}
+        formatTimestamp={formatReceiptTimestamp}
+        styles={styles}
+      />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
