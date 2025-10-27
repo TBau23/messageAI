@@ -64,6 +64,7 @@ export const useChatStore = create((set, get) => ({
   pendingMessages: {}, // conversationId -> pending/failed optimistic messages
   messageMetrics: {}, // localId -> { conversationId, sentAt, deliveryLatencyMs?, failed? }
   unreadCount: 0, // Total unread messages across all conversations
+  processedDeliveryReceipts: new Set(), // Track which messages already have delivery receipts to avoid infinite loops
 
   // Subscribe to user's conversations
   subscribeToConversations: (userId) => {
@@ -328,12 +329,16 @@ export const useChatStore = create((set, get) => ({
     );
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
+      console.log(`[subscribeToMessages] Firestore snapshot received for ${conversationId}, ${snapshot.docs.length} messages`);
+      
       // CRITICAL: Check if this conversation is still active before processing
-      const currentState = get();
+      let currentState = get();
       if (currentState.currentConversation !== conversationId) {
         console.warn(`⚠️ Ignoring Firestore update for ${conversationId} - conversation changed to ${currentState.currentConversation}`);
         return;
       }
+      
+      console.log(`[subscribeToMessages] Processing snapshot, currentConversation: ${currentState.currentConversation}`);
       
       const docs = snapshot.docs.map(docSnap => {
         const data = docSnap.data();
@@ -342,6 +347,8 @@ export const useChatStore = create((set, get) => ({
           ...data
         };
       });
+      
+      console.log(`[subscribeToMessages] Mapped ${docs.length} documents from snapshot`);
 
       // Cache messages to SQLite as they arrive
       for (const message of docs) {
@@ -352,11 +359,16 @@ export const useChatStore = create((set, get) => ({
       }
 
       // Mark messages as delivered for the current user
+      // CRITICAL: Only mark as delivered ONCE per message to avoid infinite loops
       const deliveryUpdates = [];
+      const state = get();
+      const processedDeliveryReceipts = state.processedDeliveryReceipts || new Set();
+      
       docs.forEach(message => {
         if (message.senderId !== userId) {
           const deliveredTo = message.deliveredTo || [];
-          if (!deliveredTo.includes(userId)) {
+          // Check both: not already in Firestore AND not already processed in this session
+          if (!deliveredTo.includes(userId) && !processedDeliveryReceipts.has(message.id)) {
             const docRef = doc(db, `conversations/${conversationId}/messages/${message.id}`);
             deliveryUpdates.push(
               updateDoc(docRef, {
@@ -364,19 +376,26 @@ export const useChatStore = create((set, get) => ({
                 [`deliveredReceipts.${userId}`]: serverTimestamp()
               })
             );
+            // Mark as processed immediately to prevent duplicate updates
+            processedDeliveryReceipts.add(message.id);
           }
         }
       });
 
       if (deliveryUpdates.length > 0) {
+        console.log(`[subscribeToMessages] Updating delivery receipts for ${deliveryUpdates.length} messages`);
+        // Update state with processed receipts
+        set({ processedDeliveryReceipts });
+        
         Promise.allSettled(deliveryUpdates).catch((error) => {
           console.error('Error updating delivery status:', error);
         });
       }
 
-      const state = get();
-      const pendingForConversation = state.pendingMessages[conversationId] || [];
-      const metrics = { ...state.messageMetrics };
+      // Get fresh state for pending message processing
+      currentState = get();
+      const pendingForConversation = currentState.pendingMessages[conversationId] || [];
+      const metrics = { ...currentState.messageMetrics };
       const persistedLocalIds = new Set(
         docs
           .map(msg => msg.localId)
@@ -439,14 +458,18 @@ export const useChatStore = create((set, get) => ({
         return;
       }
 
+      console.log(`[subscribeToMessages] Setting ${combinedMessages.length} messages in state (${processedDocs.length} from Firestore + ${processedPending.length} pending)`);
+      
       set({
         messages: combinedMessages,
         pendingMessages: {
-          ...state.pendingMessages,
+          ...currentState.pendingMessages,
           [conversationId]: filteredPending
         },
         messageMetrics: metrics
       });
+      
+      console.log(`[subscribeToMessages] ✅ State updated, total messages now: ${get().messages.length}`);
     });
 
     return unsubscribe;
@@ -531,6 +554,7 @@ export const useChatStore = create((set, get) => ({
 
   // Send a message (with optional image data)
   sendMessage: async (conversationId, text, senderId, imageData = null) => {
+    console.log(`[sendMessage] Starting send for conversation ${conversationId}`);
     const localId = tempId();
 
     const sentAt = Date.now();
@@ -554,6 +578,11 @@ export const useChatStore = create((set, get) => ({
     };
 
     try {
+      console.log(`[sendMessage] Adding optimistic message to state, localId: ${localId}`);
+      const currentState = get();
+      console.log(`[sendMessage] Current messages count: ${currentState.messages.length}`);
+      console.log(`[sendMessage] Current conversation: ${currentState.currentConversation}`);
+      
       set((state) => ({
         messages: [...state.messages, optimisticMessage],
         pendingMessages: {
@@ -571,8 +600,11 @@ export const useChatStore = create((set, get) => ({
           }
         }
       }));
+      
+      console.log(`[sendMessage] Optimistic message added, new count: ${get().messages.length}`);
 
       // Send to Firestore
+      console.log(`[sendMessage] Writing to Firestore: conversations/${conversationId}/messages`);
       const messageRef = await addDoc(
         collection(db, `conversations/${conversationId}/messages`),
         {
@@ -597,6 +629,8 @@ export const useChatStore = create((set, get) => ({
           }),
         }
       );
+      
+      console.log(`[sendMessage] ✅ Message written to Firestore with ID: ${messageRef.id}`);
 
       // Update conversation's last message (fire and forget to avoid blocking UI)
       updateDoc(doc(db, 'conversations', conversationId), {
@@ -775,7 +809,11 @@ export const useChatStore = create((set, get) => ({
       const activeConversation = state.currentConversation;
 
       if (!activeConversation) {
-        return { messages: [], currentConversation: null };
+        return { 
+          messages: [], 
+          currentConversation: null,
+          processedDeliveryReceipts: new Set() // Clear delivery receipt tracking
+        };
       }
 
       const filteredMetricsEntries = Object.entries(state.messageMetrics || {}).filter(
@@ -794,7 +832,8 @@ export const useChatStore = create((set, get) => ({
         messages: [],
         currentConversation: null,
         messageMetrics: filteredMetrics,
-        pendingMessages: filteredPending
+        pendingMessages: filteredPending,
+        processedDeliveryReceipts: new Set() // Clear delivery receipt tracking when changing conversations
       };
     });
   },

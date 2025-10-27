@@ -13,8 +13,8 @@ const LIMITS = {
 /**
  * Check and increment rate limit for a user and feature type
  * @param {string} uid - User ID
- * @param {string} featureType - Type of feature (translations, explanations, extractions)
- * @return {Promise<{remaining: number}>}
+ * @param {string} featureType - Type of feature
+ * @return {Promise<{remaining: number}>} Remaining quota
  * @throws {HttpsError} if rate limit exceeded
  */
 async function checkRateLimit(uid, featureType) {
@@ -49,7 +49,10 @@ async function checkRateLimit(uid, featureType) {
     }, {merge: true});
 
     const remaining = LIMITS[featureType] - count - 1;
-    console.log(`[rateLimit] User ${uid} - ${featureType}: ${count + 1}/${LIMITS[featureType]} (${remaining} remaining)`);
+    const used = count + 1;
+    const limit = LIMITS[featureType];
+    console.log(`[rateLimit] User ${uid} - ${featureType}: ` +
+      `${used}/${limit} (${remaining} remaining)`);
 
     return {remaining};
   } catch (error) {
@@ -64,7 +67,7 @@ async function checkRateLimit(uid, featureType) {
 /**
  * Get current usage for a user
  * @param {string} uid - User ID
- * @return {Promise<{usage: object, limits: object}>}
+ * @return {Promise<{usage: object, limits: object}>} Usage data
  */
 async function getUserUsage(uid) {
   const today = new Date().toISOString().split("T")[0];

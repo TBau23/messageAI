@@ -756,5 +756,16 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  // Insights Button
+  insightsButton: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  insightsButtonText: {
+    fontSize: 24,
+  },
+  insightsButtonTextDisabled: {
+    opacity: 0.5,
+  },
 });
 

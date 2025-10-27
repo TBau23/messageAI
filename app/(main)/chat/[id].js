@@ -10,7 +10,7 @@ import {
   Alert,
   ScrollView
 } from 'react-native';
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuthStore } from '../../../store/authStore';
@@ -32,6 +32,7 @@ import MessageBubble from '../../../components/chat/MessageBubble';
 import MemberListModal from '../../../components/chat/MemberListModal';
 import EditGroupNameModal from '../../../components/chat/EditGroupNameModal';
 import MessageStatusModal from '../../../components/chat/MessageStatusModal';
+import InsightsModal from '../../../components/chat/InsightsModal';
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams();
@@ -75,6 +76,12 @@ export default function ChatScreen() {
   const [isLoadingExplanation, setIsLoadingExplanation] = useState(false);
   const [selectedMessageForExplanation, setSelectedMessageForExplanation] = useState(null);
   
+  // Insights state
+  const [showInsightsModal, setShowInsightsModal] = useState(false);
+  const [insightsData, setInsightsData] = useState(null);
+  const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  const [insightsError, setInsightsError] = useState(null);
+  
   const flatListRef = useRef(null);
   const participantSubscriptionsRef = useRef({});
   const typingTimeoutRef = useRef(null);
@@ -83,6 +90,7 @@ export default function ChatScreen() {
   const retryingMessagesRef = useRef(new Set());
   const isFocusedRef = useRef(false);
   const translationTimeoutRef = useRef(null);
+  const processedMessageIdsRef = useRef(new Set());
 
   const toDisplayDate = useCallback((value) => {
     if (!value) return null;
@@ -306,6 +314,7 @@ export default function ChatScreen() {
       typingActiveRef.current = false;
       lastTypingSignalRef.current = 0;
       retryingMessagesRef.current.clear();
+      processedMessageIdsRef.current.clear(); // Clear language detection tracking
     };
   }, [
     id,
@@ -411,24 +420,35 @@ export default function ChatScreen() {
   }, [id, messages, user]);
 
   // Detect language for received messages
+  // Only runs when NEW messages are added (not on read receipt/status updates)
   useEffect(() => {
     if (!user || messages.length === 0) return;
 
     const detectLanguageForMessages = async () => {
       const detectMessageLanguage = httpsCallable(functions, 'detectMessageLanguage');
       
-      // Find messages from other users that don't have language detected yet
+      // Find messages from other users that:
+      // 1. Haven't been processed yet (new messages only)
+      // 2. Don't have language detected yet
+      // 3. Are from other users (not me)
+      // 4. Have sufficient text
       const messagesToDetect = messages.filter(msg => 
+        !processedMessageIdsRef.current.has(msg.id) && // NEW: Only unprocessed messages
         msg.senderId !== user.uid && 
         msg.text && 
         msg.text.trim().length >= 10 &&
         !messageLanguages[msg.id]
       );
 
-      // Only proceed if there are messages to detect
+      // Mark all current messages as processed (prevents reprocessing on status updates)
+      messages.forEach(msg => {
+        processedMessageIdsRef.current.add(msg.id);
+      });
+
+      // Only proceed if there are new messages to detect
       if (messagesToDetect.length === 0) return;
 
-      console.log(`[Language Detection] Detecting for ${messagesToDetect.length} messages`);
+      console.log(`[Language Detection] Detecting for ${messagesToDetect.length} new messages`);
 
       // Detect language for each message (in parallel)
       const detectionPromises = messagesToDetect.map(async (msg) => {
@@ -455,7 +475,7 @@ export default function ChatScreen() {
     };
 
     detectLanguageForMessages();
-  }, [messages, user]); // REMOVED messageLanguages from deps to prevent loop!
+  }, [messages, user]); // Runs on messages change, but only processes NEW messages
 
   const handleSend = async () => {
     if (!inputText.trim()) return;
@@ -724,10 +744,82 @@ export default function ChatScreen() {
     }
   };
 
+  // Handle Get Cultural Insights
+  const handleGetInsights = async () => {
+    if (!isOnline) {
+      Alert.alert('Offline', 'Cultural insights are unavailable while offline. Please connect to the internet and try again.');
+      return;
+    }
+
+    // Check if conversation has enough messages
+    if (messages.length < 10) {
+      Alert.alert(
+        'Not Enough Messages',
+        `Cultural insights work best with longer conversations. This chat has ${messages.length} messages, but we need at least 10 to generate meaningful insights.`
+      );
+      return;
+    }
+
+    // Show modal immediately with loading state
+    setShowInsightsModal(true);
+    setIsLoadingInsights(true);
+    setInsightsError(null);
+    setInsightsData(null);
+
+    try {
+      console.log('[Cultural Insights] Requesting insights for conversation:', id);
+      const extractCulturalInsights = httpsCallable(functions, 'extractCulturalInsights');
+      const result = await extractCulturalInsights({ conversationId: id });
+
+      console.log('[Cultural Insights]', result.data.metadata?.responseTime + 'ms',
+        'Cached:', result.data.cached,
+        'Has insights:', result.data.hasInsights,
+        'Total insights:', result.data.insights?.totalInsights || 0);
+
+      if (!result.data.hasInsights) {
+        // No insights found - show friendly message
+        setInsightsError(result.data.message || 'No cultural insights found in this conversation.');
+        setInsightsData(null);
+      } else {
+        // Successfully got insights
+        setInsightsData({
+          ...result.data.insights,
+          userLanguage: result.data.userLanguage,
+          cached: result.data.cached,
+          responseTime: result.data.metadata?.responseTime,
+          messagesAnalyzed: result.data.metadata?.messagesAnalyzed,
+          languagesDetected: result.data.metadata?.languagesDetected,
+        });
+        setInsightsError(null);
+      }
+    } catch (error) {
+      console.error('[Cultural Insights] Error:', error);
+
+      let errorMessage = 'Unable to generate insights. Please try again later.';
+
+      // Handle specific error types
+      if (error.code === 'functions/resource-exhausted') {
+        errorMessage = error.message || 'Daily insights limit reached (5/5). Resets at midnight UTC.';
+      } else if (error.code === 'functions/not-found') {
+        errorMessage = 'This conversation was not found.';
+      } else if (error.code === 'functions/unauthenticated') {
+        errorMessage = 'Please sign in to use insights.';
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      setInsightsError(errorMessage);
+      setInsightsData(null);
+    } finally {
+      setIsLoadingInsights(false);
+    }
+  };
+
   // Calculate which message should show the read receipt
   // For direct chats: Find the most recent message from current user that's been read
   // For group chats: Find the most recent message from current user that's been read by anyone
-  const getLastReadMessageId = () => {
+  // Memoized to prevent expensive recalculation on every render
+  const lastReadMessageId = useMemo(() => {
     if (!user || !messages.length) return null;
     
     // Filter to only messages from current user, in reverse order (newest first)
@@ -763,11 +855,9 @@ export default function ChatScreen() {
     }
     
     return null;
-  };
-  
-  const lastReadMessageId = getLastReadMessageId();
+  }, [user, messages, conversationData?.type, conversationData?.participants, participantMap]);
 
-  const renderMessage = ({ item }) => {
+  const renderMessage = useCallback(({ item }) => {
     if (!user) return null; // Guard against null user
     
     return (
@@ -789,7 +879,22 @@ export default function ChatScreen() {
         styles={styles}
       />
     );
-  };
+  }, [
+    user,
+    participantMap,
+    conversationData?.type,
+    lastReadMessageId,
+    messageLanguages,
+    translatedMessages,
+    translatingMessageId,
+    userPreferredLanguage,
+    isOnline,
+    handleLongPressMessage,
+    handleTranslateMessage,
+    handleRetry,
+    setSelectedStatusMessage,
+    styles
+  ]);
 
   const participantIds = conversationData?.participants || [];
   const otherUserId = conversationData?.type === 'group'
@@ -909,6 +1014,20 @@ export default function ChatScreen() {
               </Text>
             )}
           </View>
+
+          {/* Insights Button */}
+          <TouchableOpacity 
+            style={styles.insightsButton}
+            onPress={handleGetInsights}
+            disabled={!isOnline || isLoadingInsights}
+          >
+            <Text style={[
+              styles.insightsButtonText,
+              (!isOnline || isLoadingInsights) && styles.insightsButtonTextDisabled
+            ]}>
+              {isLoadingInsights ? '⏳' : '🧠'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
       {/* Network Status Banner */}
@@ -921,6 +1040,11 @@ export default function ChatScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.messagesList}
         onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+        removeClippedSubviews={true}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
+        initialNumToRender={20}
+        windowSize={10}
       />
 
       {/* Image Preview */}
@@ -1261,6 +1385,16 @@ export default function ChatScreen() {
         currentUserId={user?.uid}
         formatTimestamp={formatReceiptTimestamp}
         styles={styles}
+      />
+
+      {/* Cultural Insights Modal */}
+      <InsightsModal
+        visible={showInsightsModal}
+        onClose={() => setShowInsightsModal(false)}
+        insights={insightsData}
+        isLoading={isLoadingInsights}
+        error={insightsError}
+        userLanguage={userPreferredLanguage}
       />
       </KeyboardAvoidingView>
     </SafeAreaView>

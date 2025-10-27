@@ -23,6 +23,7 @@ const {translateText} = require("./src/translate");
 const {detectMessageLanguage} = require("./src/detectLanguage");
 const {explainIdioms} = require("./src/explainIdioms");
 const {explainCulturalContext} = require("./src/explainCulturalContext");
+const {extractCulturalInsights} = require("./src/extractCulturalInsights");
 
 // Export functions
 exports.testAI = testAI;
@@ -33,3 +34,4 @@ exports.translateText = translateText;
 exports.detectMessageLanguage = detectMessageLanguage;
 exports.explainIdioms = explainIdioms;
 exports.explainCulturalContext = explainCulturalContext;
+exports.extractCulturalInsights = extractCulturalInsights;

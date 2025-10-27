@@ -7,8 +7,7 @@ import {
   StyleSheet, 
   KeyboardAvoidingView, 
   Platform,
-  ActivityIndicator,
-  Alert
+  ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
@@ -17,12 +16,22 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const router = useRouter();
   const { signIn } = useAuthStore();
 
   const handleLogin = async () => {
+    // Clear any previous errors
+    setError('');
+
+    // Validate inputs
     if (!email || !password) {
-      Alert.alert('Error', 'Please fill in all fields');
+      setError('Please fill in all fields');
+      return;
+    }
+
+    if (!email.includes('@')) {
+      setError('Please enter a valid email address');
       return;
     }
 
@@ -33,7 +42,7 @@ export default function LoginScreen() {
     if (result.success) {
       router.replace('/(main)');
     } else {
-      Alert.alert('Login Failed', result.error);
+      setError(result.error);
     }
   };
 
@@ -64,6 +73,12 @@ export default function LoginScreen() {
           secureTextEntry
           editable={!loading}
         />
+
+        {error ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
 
         <TouchableOpacity 
           style={[styles.button, loading && styles.buttonDisabled]} 
@@ -118,6 +133,19 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 15,
     fontSize: 16,
+  },
+  errorContainer: {
+    backgroundColor: '#fee',
+    borderLeftWidth: 4,
+    borderLeftColor: '#c33',
+    borderRadius: 4,
+    padding: 12,
+    marginBottom: 15,
+  },
+  errorText: {
+    color: '#c33',
+    fontSize: 14,
+    lineHeight: 20,
   },
   button: {
     backgroundColor: '#075E54',

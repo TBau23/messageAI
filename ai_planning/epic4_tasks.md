@@ -9,6 +9,38 @@ Build personalized cross-cultural conversation analysis that extracts insights f
 
 ---
 
+## 📊 Implementation Status (Jan 2025)
+
+### ✅ COMPLETE: Backend + Frontend (Tasks 4.1-4.12)
+**All core functionality is implemented and deployed:**
+- ✅ Message retrieval with language detection (RAG retrieval)
+- ✅ Context enrichment with sender metadata (RAG augmentation)
+- ✅ Conversation formatting for agent analysis (RAG generation)
+- ✅ Structured output schema with Zod (4 insight categories)
+- ✅ GPT-4o integration using `generateObject()` (not `generateText()` with tools)
+- ✅ Message-count-based caching (10-message threshold, 24hr TTL)
+- ✅ Frontend: 🧠 insights button in chat header
+- ✅ Frontend: InsightsModal with 4 sections (cultural refs, idioms, styles, learning)
+- ✅ Error handling: offline, rate limits, empty conversations, monolingual chats
+- ✅ Seed script: `npm run seed` creates test users + multilingual group chat
+
+**Key Implementation Decision:**
+We use **structured output** (`generateObject()` with Zod schemas) instead of function calling/tools. This provides more predictable results and avoids schema validation issues. The agent still demonstrates multi-step reasoning through the structured analysis.
+
+**Testing:**
+- Seed script creates 3 test users (English, Spanish, Japanese) with 27 multilingual messages
+- Run: `firebase emulators:start` → `cd functions && npm run seed` → test in app
+
+### 🔲 TODO: Final Testing & Validation (Tasks 4.13-4.15)
+**Remaining work:**
+1. **UI/UX Testing** - Verify modal rendering, scrolling, empty states on real devices
+2. **Integration Testing** - Test with various conversation types, measure actual response times
+3. **Performance Tuning** - Validate <5s response time, optimize if needed, measure token costs
+
+**Current Status:** Feature is functional and deployed. Ready for real-world testing and optimization.
+
+---
+
 ## Task Groups
 
 ### 1. Backend - Conversation Retrieval & Context (3 tasks)
@@ -101,15 +133,19 @@ Build personalized cross-cultural conversation analysis that extracts insights f
 - [ ] Add response time logging and usage tracking
 - [ ] Return metadata: messages analyzed, languages detected, user perspective
 
-#### Task 4.7: Implement Result Caching (Optional)
-**Priority:** Low  
-**Estimated Time:** 1 hour
+#### Task 4.7: Implement Message-Count-Based Caching
+**Priority:** Medium  
+**Estimated Time:** 1.5 hours
 
-- [ ] Consider caching strategy: insights may become stale as conversation grows
-- [ ] Option: cache by `conversationId + messageCount + userLanguage`
-- [ ] Set short TTL (1 hour) since conversations evolve
-- [ ] Or: skip caching initially, evaluate after testing
-- [ ] Document decision in code comments
+- [ ] Create Firestore collection: `conversationInsights/{conversationId}/userInsights/{userId}`
+- [ ] Cache schema: `{ insights, messageCount, userLanguage, createdAt, expiresAt }`
+- [ ] Before generating insights, check cache:
+  - If cached version exists and `currentMessageCount - cachedMessageCount < 10`, return cached
+  - If message count difference >= 10, regenerate (conversation evolved significantly)
+  - If user's language changed, regenerate (perspective changed)
+- [ ] Set TTL to 24 hours (high-level summaries have longer relevance than per-message explanations)
+- [ ] Return `cached: true/false` and `cacheAge` in metadata
+- [ ] Log cache hits/misses for monitoring
 
 ---
 

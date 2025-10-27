@@ -9,6 +9,7 @@ import {
 import { doc, setDoc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebaseConfig';
 import { registerForPushNotifications } from '../utils/notifications';
+import { getFriendlyAuthError } from '../utils/authErrors';
 
 export const useAuthStore = create((set, get) => ({
   user: null,
@@ -64,8 +65,9 @@ export const useAuthStore = create((set, get) => ({
       return { success: true };
     } catch (error) {
       console.error('Sign in error:', error);
-      set({ loading: false, error: error.message });
-      return { success: false, error: error.message };
+      const friendlyError = getFriendlyAuthError(error.message);
+      set({ loading: false, error: friendlyError });
+      return { success: false, error: friendlyError };
     }
   },
 
@@ -86,8 +88,9 @@ export const useAuthStore = create((set, get) => ({
       return { success: true, uid: userCredential.user.uid };
     } catch (error) {
       console.error('Sign up error:', error);
-      set({ loading: false, error: error.message });
-      return { success: false, error: error.message };
+      const friendlyError = getFriendlyAuthError(error.message);
+      set({ loading: false, error: friendlyError });
+      return { success: false, error: friendlyError };
     }
   },
 

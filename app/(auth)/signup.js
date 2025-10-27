@@ -7,8 +7,7 @@ import {
   StyleSheet, 
   KeyboardAvoidingView, 
   Platform,
-  ActivityIndicator,
-  Alert
+  ActivityIndicator
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../../store/authStore';
@@ -18,22 +17,32 @@ export default function SignupScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const router = useRouter();
   const { signUp } = useAuthStore();
 
   const handleSignup = async () => {
+    // Clear any previous errors
+    setError('');
+
+    // Validate inputs
     if (!email || !password || !confirmPassword) {
-      Alert.alert('Error', 'Please fill in all fields');
+      setError('Please fill in all fields');
+      return;
+    }
+
+    if (!email.includes('@')) {
+      setError('Please enter a valid email address');
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert('Error', 'Passwords do not match');
+      setError('Passwords do not match');
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert('Error', 'Password must be at least 6 characters');
+      setError('Password must be at least 6 characters');
       return;
     }
 
@@ -44,7 +53,7 @@ export default function SignupScreen() {
     if (result.success) {
       router.replace('/profile-setup');
     } else {
-      Alert.alert('Signup Failed', result.error);
+      setError(result.error);
     }
   };
 
@@ -84,6 +93,12 @@ export default function SignupScreen() {
           secureTextEntry
           editable={!loading}
         />
+
+        {error ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
 
         <TouchableOpacity 
           style={[styles.button, loading && styles.buttonDisabled]} 
@@ -138,6 +153,19 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 15,
     fontSize: 16,
+  },
+  errorContainer: {
+    backgroundColor: '#fee',
+    borderLeftWidth: 4,
+    borderLeftColor: '#c33',
+    borderRadius: 4,
+    padding: 12,
+    marginBottom: 15,
+  },
+  errorText: {
+    color: '#c33',
+    fontSize: 14,
+    lineHeight: 20,
   },
   button: {
     backgroundColor: '#075E54',
